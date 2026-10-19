@@ -9,8 +9,13 @@ node_modules/
 frontend/dist/
 frontend/test-results/
 frontend/playwright-report/
-# Example paper build output (created only if someone runs init on it)
-examples/*/.rewrite/build/
-examples/*/.rewrite/state.db*
+# Per-paper state that `rewrite init` / `make start` create inside the example papers. In a
+# real paper repo .rewrite/config.toml and prompts are versioned with the paper; in the
+# examples here they are generated copies of prompts/ and would only drift.
+examples/*/.rewrite/
+# macOS
+.DS_Store
+# Claude Code per-user settings
+.claude/settings.local.json
 # make start/stop state (pid, log)
 .run/
