@@ -23,7 +23,7 @@ Every node has the same shape: `id`, `level`, `says`, `fields`, `claims`, `child
 
 | Level | `says` means | `fields` | How it is anchored to the `.tex` |
 | --- | --- | --- | --- |
-| **message** (one) | the takeaway a reader should leave with | `problem` (what is wrong today), `stakes` (why it matters, who cares), `thesis` (the argument in one breath) | nothing; it is the root |
+| **message** (one) | the takeaway a reader should leave with | `problem` (what is wrong today), `stakes` (shown as "Why it matters": who cares, what changes), `thesis` (shown as "Argument": the chain from evidence to takeaway, in one breath) | nothing; it is the root |
 | **claim** (flat bank) | the claim, stated as a sentence a reviewer could dispute | `evidence` (where in the paper it is backed, with the number if there is one), `scope` (the conditions under which it holds) | nothing; sections and paragraphs point at claims by id |
 | **section** | the promise the heading makes to the reader | `figure_story` (what the section's figure or table must make the reader see; empty is fine) | its `\section{...}` heading text |
 | **paragraph** | the local message: what this paragraph says, in one sentence | `function` (the job it does in the argument: set up, concede, define, deliver the result, transition...) | a `% @p <id>` comment line the app inserts above the paragraph |
@@ -37,7 +37,7 @@ Every node has the same shape: `id`, `level`, `says`, `fields`, `claims`, `child
    adopting a paragraph inserts `% @p p-N` above it and creates a paragraph node under the right
    section. (That is the only edit the app ever makes to your `.tex` for the spec.) You can also
    adopt one paragraph at a time while writing, or write the tree first and link later.
-2. **Message first.** Fill `says`, `problem`, `stakes`, `thesis`. If you cannot write these in
+2. **Message first.** Fill the takeaway (`says`), Problem, Why it matters and Argument. If you cannot write these in
    four sentences, the paper is not ready to be reviewed against them; that is useful to know.
 3. **Claims next.** List what the paper asserts, one sentence each, and for each write where the
    evidence is and what the claim's scope is. Writing `evidence` is where gaps show: claim `c2`
@@ -67,6 +67,12 @@ marker changed; re-read it, then edit `says` or press Reconcile), **orphaned** (
 gone), **planned** (no anchor yet; a paragraph you intend to write).
 
 ## Using it with the review passes
+
+This is a systems paper, so its `.rewrite/config.toml` (shipped with the example; `rewrite
+init` keeps it) sets `style = "systems"`: the field's standard of evidence from
+`.rewrite/prompts/styles/systems.md` is appended to every review prompt, so the claims-evidence
+and calibration passes ask for the workload, machine and metric behind every number, which is
+what a systems reviewer asks. Change it under Writing style in Settings.
 
 Run passes coarse to fine, each against this spec: `message-drift` (does the abstract, intro and
 conclusion say the message?), `claims-evidence`, `section-promises`, `paragraph-function`, then

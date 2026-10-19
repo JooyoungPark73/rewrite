@@ -3,6 +3,7 @@ name: latex-hygiene
 level: sentence
 scope: paper            # default scope
 allow_rewrites: true    # LaTeX mechanics are not the author's voice
+style: false            # the field's standard of evidence does not apply here
 model: null             # null → config default for this level
 thinking: null
 ---

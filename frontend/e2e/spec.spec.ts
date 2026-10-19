@@ -137,6 +137,16 @@ async function center(locator: Locator) {
 
 /** Press the mouse on `from`, move past dnd-kit's 5 px threshold, then in steps to `to`. */
 async function startDrag(page: Page, from: Locator) {
+  // The spec fields grow to their text a frame after the columns settle (a page-load
+  // transient), which moves the rows; press only once the handle has stopped moving.
+  await expect
+    .poll(async () => {
+      const first = await center(from)
+      await page.waitForTimeout(120)
+      const second = await center(from)
+      return first.x === second.x && first.y === second.y
+    })
+    .toBe(true)
   const a = await center(from)
   await page.mouse.move(a.x, a.y)
   await page.mouse.down()

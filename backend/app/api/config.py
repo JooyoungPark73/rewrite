@@ -24,6 +24,7 @@ from app.config import (
     ConfigError,
     save_config,
 )
+from app.prompts import PromptError, StyleInfo, load_styles
 from app.repo import Repo
 from app.state import RepoDep
 
@@ -41,10 +42,18 @@ class DockerStatus(BaseModel):
     image_present: bool  # the image for texlive_year is pulled
 
 
+class PaperSettings(BaseModel):
+    # The writing style (a file in .rewrite/prompts/styles/ without .md), "" for none.
+    style: str
+
+
 class ConfigView(BaseModel):
     main: str
+    paper: PaperSettings
     compiler: CompilerSettings
     docker: DockerStatus
+    # The styles available in this repo, for the Settings dropdown.
+    styles: list[StyleInfo]
 
 
 class CompilerUpdate(BaseModel):
@@ -52,7 +61,12 @@ class CompilerUpdate(BaseModel):
     texlive_year: int | None = None  # 2018..2030
 
 
+class PaperUpdate(BaseModel):
+    style: str | None = None  # a style name, or "" for none
+
+
 class ConfigUpdate(BaseModel):
+    paper: PaperUpdate = Field(default_factory=PaperUpdate)
     compiler: CompilerUpdate = Field(default_factory=CompilerUpdate)
 
 
@@ -63,11 +77,20 @@ def _load(repo: Repo) -> Config:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-def config_view(config: Config) -> ConfigView:
+def _styles(repo: Repo) -> list[StyleInfo]:
+    try:
+        return [s.info for s in load_styles(repo)]
+    except PromptError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def config_view(repo: Repo, config: Config) -> ConfigView:
     year = config.compiler.texlive_year
     available = docker_available()
     return ConfigView(
         main=config.paper.main,
+        paper=PaperSettings(style=config.paper.style),
+        styles=_styles(repo),
         compiler=CompilerSettings(
             kind=config.compiler.kind, texlive_year=year, image=docker_image(year)
         ),
@@ -81,7 +104,7 @@ def config_view(config: Config) -> ConfigView:
 
 @router.get("/config", response_model=ConfigView)
 def get_config(repo: RepoDep) -> ConfigView:
-    return config_view(_load(repo))
+    return config_view(repo, _load(repo))
 
 
 @router.put("/config", response_model=ConfigView)
@@ -104,6 +127,17 @@ def put_config(body: ConfigUpdate, repo: RepoDep) -> ConfigView:
         )
 
     changed = False
+    style = body.paper.style
+    if style is not None:
+        style = style.strip()
+        if style and style not in {s.name for s in _styles(repo)}:
+            raise HTTPException(
+                status_code=400,
+                detail=f"paper.style {style!r} has no file .rewrite/prompts/styles/{style}.md",
+            )
+        if style != config.paper.style:
+            config.paper.style = style
+            changed = True
     if update.kind is not None and update.kind != config.compiler.kind:
         config.compiler.kind = cast(CompilerKind, update.kind)
         changed = True
@@ -115,4 +149,4 @@ def put_config(body: ConfigUpdate, repo: RepoDep) -> ConfigView:
             save_config(repo.config_path, config)
         except OSError as exc:
             raise HTTPException(status_code=500, detail=f"could not write config: {exc}") from exc
-    return config_view(config)
+    return config_view(repo, config)

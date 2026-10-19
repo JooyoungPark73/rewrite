@@ -22,8 +22,12 @@ def docker_probes(monkeypatch: pytest.MonkeyPatch) -> dict[str, bool]:
 
 
 def test_get_config(client: TestClient, docker_probes: dict[str, bool]) -> None:
-    assert client.get("/api/config").json() == {
+    body = client.get("/api/config").json()
+    styles = body.pop("styles")  # the writing styles copied by init; tested in test_styles.py
+    assert {s["name"] for s in styles} >= {"systems", "machine-learning"}
+    assert body == {
         "main": "main.tex",
+        "paper": {"style": ""},
         "compiler": {
             "kind": "native",
             "texlive_year": 2024,

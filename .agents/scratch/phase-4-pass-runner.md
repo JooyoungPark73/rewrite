@@ -340,3 +340,16 @@ Not verified:
   config.toml with three keys passes the new levels through unchanged
   (`RunnerCliConfig.thinking.get(level, level)`). Tests: `test_xhigh_and_max_thinking_reach_both_clis`,
   `test_old_three_level_thinking_table_passes_new_levels_through`.
+
+### 2026-10-19 — writing styles (the field's standard of evidence)
+
+- `prompts/styles/<name>.md` (front matter `name`, `title`, `description`; body with five fixed
+  headings), copied by `rewrite init`, loaded by `prompts.load_styles` (README.md skipped).
+  `[paper] style` in config.toml names one; `GET/PUT /api/config` expose `paper.style` and the
+  `styles` list (400 for a name without a file). `system_with_style` appends the body to
+  system.md as "## The field's standard of evidence" in `assemble_prompt`, `assemble_triage_prompt`
+  and `assemble_compare_prompt`; the result is `AssembledPrompt.system_text`, so the cache key and
+  `prompt_hash` cover it. Passes opt out with `style: false` (latex-hygiene, ab-compare). A
+  configured style with no file is a PromptError at run time, never a silent drop.
+- Eleven styles drafted from Alan Synn's "Same Computer Science, Different Senses of Reality".
+  Tests: `tests/test_styles.py` (7); Settings dropdown e2e in `synctex.spec.ts`.

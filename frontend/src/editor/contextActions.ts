@@ -3,7 +3,7 @@
 // right-click (or Ctrl/Cmd-.) while text is selected.
 //
 // PLAN.md "Spec editor": selecting text in the editor offers "set as this
-// paragraph's message", "lift to claim" and "set as thesis", which is how
+// paragraph's message", "lift to claim" and "set as argument" (the `thesis` field), which is how
 // sentences move between levels: across the two panes. Every item is one or
 // two phase 3 spec ops (decided in phase-5-ab-git-coverage.md), nothing new
 // on the backend:
@@ -11,7 +11,7 @@
 //   Set as this paragraph's message   update {id: <enclosing node>, says: <selection>}
 //   Lift to claim                     add_claim {says: <selection>}, then
 //                                     link_claim {id: <enclosing node>, claim_id: <new id>}
-//   Set as thesis                     update {id: <message id>, fields: {thesis: <selection>}}
+//   Set as argument                   update {id: <message id>, fields: {thesis: <selection>}}
 //   Compare with earlier version…     opens the blind A/B compare dialog for the node
 //
 // The selection text is whitespace-collapsed first (line breaks and indents
@@ -203,7 +203,7 @@ export async function runMenuAction(menu: EditorMenu, action: MenuAction): Promi
       const spec = useSpecStore.getState().spec
       if (!spec) return null
       const res = await op(steps, { type: 'update', id: spec.message.id, fields: { thesis: text } })
-      return res ? `Thesis set to ${quote(text)}.` : null
+      return res ? `Argument set to ${quote(text)}.` : null
     })
     return
   }

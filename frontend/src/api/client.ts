@@ -150,6 +150,12 @@ export type CompilerKind = 'native' | 'docker'
 export interface AppConfig {
   /** Main .tex file, relative to the repo root. */
   main: string
+  paper: {
+    /** The writing style: a file in .rewrite/prompts/styles/ without .md, or "" for none. */
+    style: string
+  }
+  /** The styles available in this repo (prompts/styles/*.md), for the Settings dropdown. */
+  styles: StyleInfo[]
   compiler: {
     kind: CompilerKind
     /** TeX Live year for the Docker image (texlive/texlive:TL<year>-historic). */
@@ -165,9 +171,19 @@ export interface AppConfig {
   }
 }
 
-/** Body of PUT /api/config. */
+/** One writing style (prompts/styles/<name>.md): the field's standard of evidence. */
+export interface StyleInfo {
+  name: string
+  title: string
+  description: string
+  /** Repo-relative path of the file. */
+  file: string
+}
+
+/** Body of PUT /api/config; each part is optional and only the given parts change. */
 export interface ConfigUpdate {
-  compiler: { kind: CompilerKind; texlive_year: number }
+  paper?: { style: string }
+  compiler?: { kind: CompilerKind; texlive_year: number }
 }
 
 // ---- Phase 3: the paper.json spec ------------------------------------------

@@ -277,3 +277,14 @@ Not verified / open:
   as chips under it (caption shown, click opens the `.tex` at the `\label` line, unknown labels
   flagged). Tests: `tests/test_labels.py` (4), e2e in `spec.spec.ts`. The
   `examples/sample-paper-with-spec` spec uses labels throughout.
+- Outliner rows: the `says` line is a one-row textarea that grows with its text (same grow
+  rule; the re-measure on width changes is deferred to the next animation frame, since
+  growing inside a ResizeObserver callback triggers "ResizeObserver loop" errors). ArrowUp /
+  ArrowDown leave the row only when the caret is on the first / last visual line (measured
+  with a hidden probe element), so wrapped text is navigable; Enter, Tab, Shift-Tab, Alt-arrows
+  and Backspace-on-empty behave as before. The e2e drag helper now waits for the rows to stop
+  moving before pressing: fields grow a frame after the columns settle on page load.
+- Labels only (2026-10-19): the message card shows `stakes` as "Why it matters" and `thesis` as
+  "Argument" (`spec/tree.ts` `FIELD_LABELS`); the editor context menu's "Set as thesis" is "Set
+  as argument" and its toast says "Argument set". The paper.json keys and the prompts are
+  unchanged.

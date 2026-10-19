@@ -4,6 +4,7 @@ kind: compare          # not a review pass: the blind A/B compare uses it
 level: paragraph
 scope: selection        # default scope
 allow_rewrites: false   # true only where the text is not the author's voice
+style: false            # the field's standard of evidence does not apply here
 model: null             # null → config default for this level
 thinking: null
 ---

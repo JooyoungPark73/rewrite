@@ -23,7 +23,7 @@
 //   Backspace    on an empty line: delete the row, focus the one above
 //   Escape       leave the input
 // Ctrl/Cmd-Z and Ctrl/Cmd-Shift-Z (undo/redo) are handled by SpecView.
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, useLayoutEffect } from 'react'
 import type { Node as SpecNode, NodeStatus } from '../api/client'
 import { LEVEL_FIELDS } from '../api/client'
 import { useCompareStore } from '../state/compare'
@@ -137,10 +137,66 @@ function SaysInput({ node }: { node: SpecNode }) {
   const applyOp = useSpecStore((s) => s.applyOp)
   const select = useSpecStore((s) => s.select)
   const text = useSyncedText(`says:${node.id}`, node.says, (says) => applyOp({ type: 'update', id: node.id, says }))
-  const inputRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
   useFocusOnRequest(node.id, inputRef)
 
-  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+  // The says line is a textarea that grows with its text (one visual line when it fits), so
+  // a long promise or local message is readable in place. Re-measured on width changes too,
+  // since wrapping depends on the width (see TextField.tsx for the same rule).
+  useLayoutEffect(() => {
+    const area = inputRef.current
+    if (!area) return
+    const grow = () => {
+      area.style.height = 'auto'
+      area.style.height = `${area.scrollHeight}px`
+    }
+    grow()
+    if (typeof ResizeObserver === 'undefined') return
+    let lastWidth = area.clientWidth
+    let frame = 0
+    // Re-measure on the next frame, not inside the callback: growing the element there
+    // would resize it again in the same frame ("ResizeObserver loop" errors).
+    const observer = new ResizeObserver(() => {
+      if (area.clientWidth === lastWidth) return
+      lastWidth = area.clientWidth
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(grow)
+    })
+    observer.observe(area)
+    return () => {
+      observer.disconnect()
+      cancelAnimationFrame(frame)
+    }
+  }, [text.value])
+
+  /** True when the caret sits on the first (ArrowUp) or last (ArrowDown) visual line, so the
+   *  arrow should leave this row rather than move inside its wrapped text. */
+  const caretAtEdge = (area: HTMLTextAreaElement, key: 'ArrowUp' | 'ArrowDown') => {
+    if (area.selectionStart !== area.selectionEnd) return false
+    const lines = area.value.split('\n')
+    const lineHeight = parseFloat(getComputedStyle(area).lineHeight) || 20
+    const visualLines = Math.max(1, Math.round(area.clientHeight / lineHeight))
+    if (visualLines <= 1 && lines.length <= 1) return true
+    // Measure the caret's row by the height of the text before it.
+    const probe = document.createElement('div')
+    const style = getComputedStyle(area)
+    for (const prop of ['font', 'letterSpacing', 'lineHeight', 'padding', 'width', 'boxSizing', 'border'] as const) {
+      probe.style[prop] = style[prop]
+    }
+    probe.style.position = 'absolute'
+    probe.style.visibility = 'hidden'
+    probe.style.whiteSpace = 'pre-wrap'
+    probe.style.wordBreak = 'break-word'
+    probe.textContent = area.value.slice(0, area.selectionStart) || ' '
+    document.body.appendChild(probe)
+    const caretRow = Math.max(1, Math.round(probe.clientHeight / lineHeight))
+    probe.textContent = area.value || ' '
+    const totalRows = Math.max(1, Math.round(probe.clientHeight / lineHeight))
+    probe.remove()
+    return key === 'ArrowUp' ? caretRow <= 1 : caretRow >= totalRows
+  }
+
+  const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing) return // typing with an input method
     const store = useSpecStore.getState()
     const spec = store.spec
@@ -181,6 +237,7 @@ function SaysInput({ node }: { node: SpecNode }) {
       if (to < 0 || to >= loc.parent.children.length) return
       structural({ type: 'move', id: node.id, parent_id: loc.parent.id, index: to }, 'self')
     } else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && plain && !e.shiftKey) {
+      if (!caretAtEdge(e.currentTarget, e.key)) return // move inside the wrapped text first
       const rows = visibleRowIds(spec, store.collapsed)
       const next = rows[rows.indexOf(node.id) + (e.key === 'ArrowUp' ? -1 : 1)]
       if (next) {
@@ -208,15 +265,16 @@ function SaysInput({ node }: { node: SpecNode }) {
   }
 
   return (
-    <input
+    <textarea
       ref={inputRef}
+      rows={1}
       value={text.value}
       onChange={(e) => text.onChange(e.target.value)}
       onBlur={text.flush}
       onFocus={() => select(node.id)}
       onKeyDown={onKeyDown}
       placeholder={PLACEHOLDER[node.level] ?? ''}
-      className={`h-7 min-w-0 flex-1 rounded border border-transparent bg-transparent px-1.5 text-sm outline-none placeholder:font-normal placeholder:text-base-content/35 hover:border-base-300 focus:border-primary focus:bg-base-100 ${
+      className={`min-h-7 min-w-0 flex-1 resize-none overflow-hidden rounded border border-transparent bg-transparent px-1.5 py-1 text-sm leading-5 outline-none placeholder:font-normal placeholder:text-base-content/35 hover:border-base-300 focus:border-primary focus:bg-base-100 ${
         node.level === 'section' ? 'font-semibold' : ''
       }`}
       aria-label={`${node.level} ${node.id} says`}

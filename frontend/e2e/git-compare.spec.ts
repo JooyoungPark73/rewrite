@@ -455,7 +455,7 @@ test('Coverage matrix: counts, empty rows / columns, and a cell click is one lin
 // Editor selection menu
 // ---------------------------------------------------------------------------
 
-test('Selection menu: lift to claim, set as message, set as thesis, and Undo from the toast', async ({ page, request }) => {
+test('Selection menu: lift to claim, set as message, set as argument, and Undo from the toast', async ({ page, request }) => {
   const errors = collectConsoleErrors(page)
   await seedSpec(request, paperSpec([introSection({ children: [p1({ says: 'old message' })] })]))
   await putTex(request, INTRO_FILE, INTRO_WITH_MARKER)
@@ -481,14 +481,14 @@ test('Selection menu: lift to claim, set as message, set as thesis, and Undo fro
   await expect(page.locator('[data-testid="claim-card"][data-claim-id="c1"]').getByTestId('claim-says')).toHaveValue(FIRST_SENTENCE)
   await expect(row(page, 'p-1').locator('[data-testid="linked-claim"][data-claim-id="c1"]')).toBeVisible()
 
-  // Ctrl-. opens the same menu from the keyboard: Set as thesis.
+  // Ctrl-. opens the same menu from the keyboard: Set as argument (the `thesis` field).
   await openFile(page, INTRO_FILE)
   line = await selectLine(page, FIRST_SENTENCE)
   await page.keyboard.press('ControlOrMeta+Period')
   await expect(menu(page)).toBeVisible()
   await expect(menu(page).getByTestId('ctx-set-message')).toBeFocused()
   await menu(page).getByTestId('ctx-set-thesis').click()
-  await expect(page.getByTestId('spec-toast')).toContainText('Thesis set')
+  await expect(page.getByTestId('spec-toast')).toContainText('Argument set')
   await page.getByTestId('tab-spec').click()
   await expect(page.getByTestId('message-field-thesis')).toHaveValue(FIRST_SENTENCE)
 

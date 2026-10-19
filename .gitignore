@@ -12,7 +12,10 @@ frontend/playwright-report/
 # Per-paper state that `rewrite init` / `make start` create inside the example papers. In a
 # real paper repo .rewrite/config.toml and prompts are versioned with the paper; in the
 # examples here they are generated copies of prompts/ and would only drift.
-examples/*/.rewrite/
+examples/*/.rewrite/*
+# ... except the example's own config.toml, which sets its writing style (a real paper repo
+# versions .rewrite/config.toml and the prompts too).
+!examples/*/.rewrite/config.toml
 # macOS
 .DS_Store
 # Claude Code per-user settings

@@ -63,14 +63,20 @@ export default function TextField({
     grow()
     if (typeof ResizeObserver === 'undefined') return
     let lastWidth = area.clientWidth
+    let frame = 0
+    // Re-measure on the next frame, not inside the callback: growing the element there
+    // would resize it again in the same frame ("ResizeObserver loop" errors).
     const observer = new ResizeObserver(() => {
-      if (area.clientWidth !== lastWidth) {
-        lastWidth = area.clientWidth
-        grow()
-      }
+      if (area.clientWidth === lastWidth) return
+      lastWidth = area.clientWidth
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(grow)
     })
     observer.observe(area)
-    return () => observer.disconnect()
+    return () => {
+      observer.disconnect()
+      cancelAnimationFrame(frame)
+    }
   }, [text.value, rows])
 
   const common = {

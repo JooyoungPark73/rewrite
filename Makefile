@@ -13,7 +13,8 @@
 #
 # REPO is the paper repo to open (default: $REWRITE_REPO). Without either, `make start` shows a
 # Finder folder picker on macOS (Cancel = choose the repo in the UI, which can browse folders
-# too); a picked folder without .rewrite/ is initialised first.
+# too). `rewrite init` (idempotent: it only adds missing files, never overwrites) runs on the
+# repo before serving, so a repo initialised by an older version gets new prompt files.
 # PORT defaults to 8765. The pid and log live under .run/ in this repo (gitignored), never in
 # a global path; one `make start` = one backend = one paper (use a different PORT for another).
 
@@ -64,8 +65,8 @@ start: $(RUN)
 	  echo "no REPO given: pick the paper folder in the Finder dialog (Cancel = choose it in the UI)"; \
 	  repo=$$(osascript -e 'POSIX path of (choose folder with prompt "rewrite: choose the paper repo to open")' 2>/dev/null | sed 's:/$$::'); \
 	fi; \
-	if [ -n "$$repo" ] && [ ! -d "$$repo/.rewrite" ]; then \
-	  echo "$$repo has no .rewrite/ yet; running rewrite init"; ( cd backend && uv run rewrite init "$$repo" ) || exit 1; \
+	if [ -n "$$repo" ]; then \
+	  ( cd backend && uv run rewrite init "$$repo" > /dev/null ) || { echo "rewrite init $$repo failed"; exit 1; }; \
 	fi; \
 	if [ -n "$$repo" ]; then set -- --repo "$$repo"; else set --; fi; \
 	( cd backend && exec uv run rewrite serve "$$@" --port $(PORT) ) > "$(LOG)" 2>&1 < /dev/null & \

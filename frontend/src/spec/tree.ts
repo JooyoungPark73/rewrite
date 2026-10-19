@@ -103,7 +103,16 @@ export function claimColor(id: string): string {
   return CLAIM_COLORS[((n % CLAIM_COLORS.length) + CLAIM_COLORS.length) % CLAIM_COLORS.length]
 }
 
-/** Human label for a `fields` key ("figure_story" -> "figure story"). */
+/**
+ * Human label for a `fields` key. The keys in paper.json stay as they are (the prompts
+ * and every existing spec use them); only the words on screen change: `stakes` reads
+ * "Why it matters" and `thesis` reads "Argument". Other keys: "figure_story" -> "figure story".
+ */
+const FIELD_LABELS: Record<string, string> = {
+  stakes: 'Why it matters',
+  thesis: 'Argument',
+}
+
 export function fieldLabel(key: string): string {
-  return key.replace(/_/g, ' ')
+  return FIELD_LABELS[key] ?? key.replace(/_/g, ' ')
 }

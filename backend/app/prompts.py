@@ -53,7 +53,7 @@ from app.files import (
     strip_tex_comment,
 )
 from app.findings import findings_schema_text
-from app.repo import Repo, sandbox_text
+from app.repo import Repo, default_prompts_dir, sandbox_text
 from app.spec import LEVEL_FIELDS, Node, PaperSpec, find_tree_node, load_spec
 
 log = logging.getLogger(__name__)
@@ -110,7 +110,10 @@ class PassMeta(BaseModel):
     scope: ScopeKind = "section"
     allow_rewrites: bool = False
     model: str | None = None  # null → the config default for this level
-    thinking: Literal["low", "medium", "high"] | None = None
+    thinking: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    # Whether the paper's writing style (config `[paper] style`) is appended to system.md
+    # for this pass. False for passes where the field's standard of evidence is irrelevant.
+    style: bool = True
 
 
 class PassInfo(BaseModel):
@@ -127,6 +130,7 @@ class PassInfo(BaseModel):
     error: str | None = None  # bad front matter or template; the pass is not runnable
     runnable: bool = True  # a review pass without errors (POST /api/runs accepts it)
     kind: PassKind = "review"  # review | triage | compare
+    style: bool = True  # the paper's writing style is added to the prompt
 
 
 @dataclass(frozen=True)
@@ -198,6 +202,7 @@ def parse_pass(text: str, rel: str, stem: str) -> PassDef:
         level=meta.level,
         scope=meta.scope,
         allow_rewrites=meta.allow_rewrites,
+        style=meta.style,
         model=meta.model,
         thinking=meta.thinking,
         file=rel,
@@ -337,6 +342,115 @@ def load_system(repo: Repo) -> str:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
         raise PromptError(f"cannot read .rewrite/prompts/system.md: {exc}") from exc
+
+
+# --------------------------------------------------------------------------- writing styles
+
+STYLES_DIR = "styles"
+STYLE_HEADING = "## The field's standard of evidence"
+
+
+class StyleMeta(BaseModel):
+    """The YAML front matter of a style file (prompts/styles/<name>.md)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    title: str
+    description: str = ""
+
+
+class StyleInfo(BaseModel):
+    """A writing style as GET /api/config lists it."""
+
+    name: str
+    title: str
+    description: str
+    file: str  # repo-relative path
+
+
+@dataclass(frozen=True)
+class StyleDef:
+    info: StyleInfo
+    body: str  # the Markdown body (no front matter), as appended to system.md
+    text: str  # the whole file
+
+
+def _parse_style(text: str, rel: str, stem: str) -> StyleDef:
+    m = _FRONT_MATTER_RE.match(text)
+    if not m:
+        raise PromptError(f"style {rel}: no YAML front matter")
+    try:
+        data = yaml.safe_load(m.group(1)) or {}
+        meta = StyleMeta.model_validate(data)
+    except (yaml.YAMLError, ValidationError) as exc:
+        raise PromptError(f"style {rel}: bad front matter: {exc}") from exc
+    if meta.name != stem:
+        raise PromptError(f"style {rel}: front matter name {meta.name!r} must equal {stem!r}")
+    body = m.group(2).strip("\n")
+    if not body.strip():
+        raise PromptError(f"style {rel}: empty body")
+    info = StyleInfo(name=meta.name, title=meta.title, description=meta.description, file=rel)
+    return StyleDef(info=info, body=body, text=text)
+
+
+def load_styles(repo: Repo) -> list[StyleDef]:
+    """Every style file in .rewrite/prompts/styles/, by name (README.md is documentation).
+
+    A repo initialised before styles existed has no such folder; then the app's default set
+    is used as is (read-only; `rewrite init` copies it into the repo next time it runs)."""
+    directory = repo.prompts_dir / STYLES_DIR
+    if not directory.is_dir():
+        directory = default_prompts_dir() / STYLES_DIR
+        if not directory.is_dir():
+            return []
+    out: list[StyleDef] = []
+    for path in sorted(directory.glob("*.md")):
+        if path.stem.lower() == "readme":
+            continue
+        rel = (
+            path.relative_to(repo.root).as_posix()
+            if path.is_relative_to(repo.root)
+            else f"(default) {STYLES_DIR}/{path.name}"
+        )
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise PromptError(f"cannot read {rel}: {exc}") from exc
+        out.append(_parse_style(text, rel, path.stem))
+    return out
+
+
+def get_style(repo: Repo, name: str) -> StyleDef | None:
+    """The configured style, or None for the empty name. PromptError when the name has no
+    file, so a run never silently drops the standard the author chose."""
+    if not name:
+        return None
+    for style in load_styles(repo):
+        if style.info.name == name:
+            return style
+    raise PromptError(
+        f"writing style {name!r} has no file .rewrite/prompts/styles/{name}.md; "
+        "pick another in Settings or add the file"
+    )
+
+
+def style_section(style: StyleDef | None) -> str:
+    """The text appended to system.md for a style ("" for none)."""
+    if style is None:
+        return ""
+    return f"{STYLE_HEADING}\n\nThis draft is a {style.info.title} paper.\n\n{style.body}"
+
+
+def system_with_style(repo: Repo, pass_def: PassDef) -> str:
+    """system.md plus the paper's writing style section, unless the pass opts out. The
+    result is what AssembledPrompt.system_text holds, so the cache key covers the style."""
+    system_text = load_system(repo)
+    if not pass_def.info.style:
+        return system_text
+    style = get_style(repo, repo.load_config().paper.style)
+    section = style_section(style)
+    return join_prompt([system_text, section]).rstrip("\n") if section else system_text
 
 
 def ensure_sandbox(repo: Repo, system_text: str | None = None) -> list[str]:
@@ -871,7 +985,7 @@ def assemble_compare_prompt(
     with the reduced outline and the two versions in the order given. `source` is empty (a
     comparison has no numbered source) and `findings_schema` carries the verdict schema."""
     pass_def = get_compare_pass(repo, pass_name)
-    system_text = load_system(repo)
+    system_text = system_with_style(repo, pass_def)
     reduced = reduced_spec(spec, node_id)
     source = f"=== Version A ===\n{version_a}\n\n=== Version B ===\n{version_b}"
     variables = {
@@ -905,7 +1019,7 @@ def assemble_prompt(
     member of a per-section fan-out) the body is preceded by FANOUT_NOTE, unless the pass
     uses the `fanout` variable to word that itself."""
     pass_def = get_pass(repo, pass_name)
-    system_text = load_system(repo)
+    system_text = system_with_style(repo, pass_def)
     spec, spec_text = load_spec_for_prompt(repo)
     resolved = resolve_scope(repo, spec, scope)
     variables = {
@@ -942,7 +1056,7 @@ def assemble_triage_prompt(
     open findings as `findings` and the verdict schema as `findings_schema`. This is the one
     prompt that contains earlier findings (PLAN.md "Rule enforcement": clean context)."""
     pass_def = get_triage_pass(repo)
-    system_text = load_system(repo)
+    system_text = system_with_style(repo, pass_def)
     spec, spec_text = load_spec_for_prompt(repo)
     resolved = resolve_scope(repo, spec, scope)
     variables = {

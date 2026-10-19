@@ -51,8 +51,17 @@ def test_all_passes_present() -> None:
 @pytest.mark.parametrize("path", PASSES, ids=lambda p: p.stem)
 def test_front_matter(path) -> None:  # type: ignore[no-untyped-def]
     meta, _ = split(path)
-    assert set(meta) - {"kind"} == {"name", "level", "scope", "allow_rewrites", "model", "thinking"}
+    assert set(meta) - {"kind", "style"} == {
+        "name",
+        "level",
+        "scope",
+        "allow_rewrites",
+        "model",
+        "thinking",
+    }
     assert meta.get("kind", "review") == KINDS.get(path.stem, "review")
+    # The field's standard of evidence applies to every pass but these two.
+    assert meta.get("style", True) is (path.stem not in {"latex-hygiene", "ab-compare"})
     assert meta["name"] == path.stem
     assert meta["level"] == EXPECTED[path.stem]
     assert meta["scope"] in {"paper", "section", "file", "selection", "ends"}

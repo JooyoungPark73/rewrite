@@ -26,6 +26,10 @@ class _Section(BaseModel):
 
 class PaperConfig(_Section):
     main: str = "main.tex"
+    # A writing style: the name of a file in .rewrite/prompts/styles/ (without .md) whose
+    # body is appended to system.md in every review pass as the field's standard of
+    # evidence. Empty = none.
+    style: str = ""
 
 
 CompilerKind = Literal["native", "docker"]
@@ -270,6 +274,9 @@ DEFAULT_CONFIG_TOML = """\
 
 [paper]
 main = "{main}"
+# Writing style: a file in .rewrite/prompts/styles/ without .md (systems, machine-learning,
+# ...), appended to system.md in every review pass; empty = none.
+style = ""
 
 [compiler]
 kind = "native"            # native | docker

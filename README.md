@@ -40,7 +40,9 @@ cd frontend && npm run build
 ```
 
 `examples/sample-paper-with-spec/` is the sample paper with a fully filled `paper.json` and a
-README that explains what each level of the spec is for and how to fill it.
+README that explains what each level of the spec is for and how to fill it. `docs/workflow.md`
+explains the prompt set, the per-field writing styles (`prompts/styles/`, chosen in Settings)
+and how to use the app while writing and for the full review.
 
 Point the app at a paper repo once with `uv run rewrite init /path/to/paper` (idempotent):
 it creates `.rewrite/` (config, prompts, sandbox, build dir), adds the gitignore lines and an
@@ -65,5 +67,5 @@ backend/    FastAPI app (app/), tests
 frontend/   Vite + React + TypeScript UI, Playwright e2e, mock backend for the e2e suite
 prompts/    default prompt set copied into a paper repo by `rewrite init`
 examples/   sample-paper used by the tests and the live checks
-docs/       notes (e.g. the optional Tauri wrap)
+docs/       docs/workflow.md: the prompt set, and how to use the app while writing and for the full review
 ```

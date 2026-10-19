@@ -372,3 +372,25 @@ test('the Docker option is disabled with a hint when docker is unavailable', asy
   await page.keyboard.press('Escape')
   await expect(dialog).toHaveCount(0)
 })
+
+test('Settings: the writing style dropdown lists the repo styles, saves only the style, and keeps it', async ({ page, request }) => {
+  await page.goto('/')
+  await page.getByTestId('settings-button').click()
+  const dialog = page.getByTestId('settings-dialog')
+  const select = dialog.getByTestId('style-select')
+  await expect(select).toHaveValue('')
+  await expect(select.locator('option')).toHaveCount(4) // none + 3 mock styles
+  await expect(dialog.getByTestId('style-description')).toContainText('Pick the research culture')
+  await select.selectOption('systems')
+  await expect(dialog.getByTestId('style-description')).toContainText('Truth by measurement')
+  const put = page.waitForRequest((r) => r.url().endsWith('/api/config') && r.method() === 'PUT')
+  await dialog.getByRole('button', { name: 'Save' }).click()
+  expect((await put).postDataJSON()).toEqual({ paper: { style: 'systems' } })
+  await expect(dialog.getByTestId('settings-save-message')).toContainText('Saved')
+  const stored = await (await request.get(`${MOCK_URL}/api/config`)).json()
+  expect(stored.paper).toEqual({ style: 'systems' })
+  // Reopened: the saved style is selected.
+  await dialog.getByRole('button', { name: 'Close' }).click()
+  await page.getByTestId('settings-button').click()
+  await expect(page.getByTestId('settings-dialog').getByTestId('style-select')).toHaveValue('systems')
+})

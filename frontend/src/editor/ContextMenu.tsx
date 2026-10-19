@@ -6,7 +6,7 @@
 //   “the selected words…”                in p-3
 //   Set as this paragraph's message
 //   Lift to claim
-//   Set as thesis
+//   Set as argument (the message's `thesis` field)
 //   Compare with earlier version…
 //
 // When the selection is not inside an adopted paragraph (no `% @p` marker
@@ -86,7 +86,7 @@ export default function ContextMenu() {
         { action: 'claim', label: '…then lift to claim', hint: 'adopt, then a new linked claim', testId: 'ctx-adopt-claim' },
       ]
   items.push(
-    { action: 'thesis', label: 'Set as thesis', hint: 'the message card’s thesis field', testId: 'ctx-set-thesis' },
+    { action: 'thesis', label: 'Set as argument', hint: 'the message card’s Argument field (`thesis` in paper.json)', testId: 'ctx-set-thesis' },
     {
       action: 'compare',
       label: 'Compare with earlier version…',

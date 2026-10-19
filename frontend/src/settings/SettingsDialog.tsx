@@ -34,6 +34,8 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   // Form fields. The year is kept as text so a half-typed value can be shown.
   const [kind, setKind] = useState<CompilerKind>('native')
   const [yearText, setYearText] = useState('')
+  // The writing style (a name from config.styles, or '' for none).
+  const [style, setStyle] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveMessage, setSaveMessage] = useState<{ ok: boolean; text: string } | null>(null)
 
@@ -50,6 +52,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
           if (fillForm) {
             setKind(fresh.compiler.kind)
             setYearText(String(fresh.compiler.texlive_year))
+            setStyle(fresh.paper.style)
           }
         },
         (err: unknown) => setLoadError(errorMessage(err)),
@@ -80,7 +83,9 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
   }, [pull.lines.length])
 
   const year = parseYear(yearText)
-  const dirty = !!config && (kind !== config.compiler.kind || year !== config.compiler.texlive_year)
+  const compilerDirty = !!config && (kind !== config.compiler.kind || year !== config.compiler.texlive_year)
+  const styleDirty = !!config && style !== config.paper.style
+  const dirty = compilerDirty || styleDirty
   const dockerAvailable = config?.docker.available ?? false
 
   const save = async () => {
@@ -88,9 +93,13 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
     setSaving(true)
     setSaveMessage(null)
     try {
-      await putConfig({ compiler: { kind, texlive_year: year } })
+      // Only the parts that changed go in the PUT (the backend keeps the rest).
+      await putConfig({
+        ...(compilerDirty ? { compiler: { kind, texlive_year: year } } : {}),
+        ...(styleDirty ? { paper: { style } } : {}),
+      })
       await reload(true)
-      setSaveMessage({ ok: true, text: 'Saved. The next compile uses these settings.' })
+      setSaveMessage({ ok: true, text: 'Saved. The next compile and the next review run use these settings.' })
     } catch (err) {
       setSaveMessage({ ok: false, text: errorMessage(err) })
     } finally {
@@ -100,7 +109,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
 
   let pullDisabledReason: string | null = null
   if (!dockerAvailable) pullDisabledReason = 'Docker was not found on the backend’s PATH.'
-  else if (dirty) pullDisabledReason = 'Save first: Pull fetches the image for the saved year.'
+  else if (compilerDirty) pullDisabledReason = 'Save first: Pull fetches the image for the saved year.'
   else if (pull.status === 'running') pullDisabledReason = 'A pull is already running.'
 
   return (
@@ -137,6 +146,35 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
               void save()
             }}
           >
+            {/* Writing style: which field's standard of evidence the review passes apply. */}
+            <fieldset className="fieldset">
+              <legend className="fieldset-legend">Writing style (the field's standard of evidence)</legend>
+              <select
+                className="select select-sm w-full"
+                value={style}
+                onChange={(e) => setStyle(e.target.value)}
+                aria-label="Writing style"
+                data-testid="style-select"
+              >
+                <option value="">None: the passes use only system.md</option>
+                {/* A configured name with no file in the repo: keep it selectable and say so, rather than show "None". */}
+                {style && !config.styles.some((s) => s.name === style) && (
+                  <option value={style} data-testid="style-missing">
+                    {style} (no file in .rewrite/prompts/styles/)
+                  </option>
+                )}
+                {config.styles.map((s) => (
+                  <option key={s.name} value={s.name} title={s.description}>
+                    {s.title}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-base-content/60" data-testid="style-description">
+                {config.styles.find((s) => s.name === style)?.description ??
+                  'Pick the research culture the paper belongs to. Its standard of evidence is appended to system.md in every review pass, so claims, evidence and wording are judged the way a reviewer in that field would. Files live in .rewrite/prompts/styles/; add your own.'}
+              </p>
+            </fieldset>
+
             {/* Compiler kind: native latexmk, or latexmk inside a TeX Live Docker image. */}
             <fieldset className="fieldset">
               <legend className="fieldset-legend">Compiler</legend>

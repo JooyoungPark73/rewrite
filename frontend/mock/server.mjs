@@ -257,10 +257,19 @@ function writeTex(path, content) {
 
 const imageFor = (year) => `texlive/texlive:TL${year}-historic`
 
+// The writing styles the mock "repo" has (GET /api/config `styles`).
+const MOCK_STYLES = [
+  { name: 'systems', title: 'Systems, architecture, databases and networking', description: 'Truth by measurement under a stated workload, system and metric.', file: '.rewrite/prompts/styles/systems.md' },
+  { name: 'machine-learning', title: 'Machine learning', description: 'Truth by benchmarks, generalisation tests and distribution shift.', file: '.rewrite/prompts/styles/machine-learning.md' },
+  { name: 'hci-design', title: 'HCI and design research', description: 'Truth by interpretation of people, practice and context.', file: '.rewrite/prompts/styles/hci-design.md' },
+]
+
 function configBody() {
   const image = imageFor(state.compiler.texlive_year)
   return {
     main: 'main.tex',
+    paper: { style: state.style ?? '' },
+    styles: MOCK_STYLES,
     compiler: { ...state.compiler, image },
     docker: { available: state.dockerAvailable, image_present: state.pulledImages.has(image) },
   }
@@ -653,15 +662,24 @@ async function handle(req, res) {
 
   if (route === 'PUT /api/config') {
     const body = await readBody(req)
-    const kind = body?.compiler?.kind
-    const year = body?.compiler?.texlive_year
-    if (kind !== 'native' && kind !== 'docker') {
-      return sendJson(res, 422, { detail: [{ msg: "compiler.kind must be 'native' or 'docker'" }] })
+    if (body?.paper && typeof body.paper.style === 'string') {
+      const style = body.paper.style.trim()
+      if (style && !MOCK_STYLES.some((s) => s.name === style)) {
+        return sendJson(res, 400, { detail: `paper.style '${style}' has no file .rewrite/prompts/styles/${style}.md` })
+      }
+      state.style = style
     }
-    if (!Number.isInteger(year) || year < 2018 || year > 2030) {
-      return sendJson(res, 422, { detail: [{ msg: 'compiler.texlive_year must be an integer from 2018 to 2030' }] })
+    if (body?.compiler) {
+      const kind = body.compiler.kind
+      const year = body.compiler.texlive_year
+      if (kind !== 'native' && kind !== 'docker') {
+        return sendJson(res, 422, { detail: [{ msg: "compiler.kind must be 'native' or 'docker'" }] })
+      }
+      if (!Number.isInteger(year) || year < 2018 || year > 2030) {
+        return sendJson(res, 422, { detail: [{ msg: 'compiler.texlive_year must be an integer from 2018 to 2030' }] })
+      }
+      state.compiler = { kind, texlive_year: year }
     }
-    state.compiler = { kind, texlive_year: year }
     return sendJson(res, 200, configBody())
   }
 
