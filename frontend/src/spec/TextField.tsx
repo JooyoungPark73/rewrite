@@ -1,12 +1,17 @@
 // TextField: one plain editable text of the spec (a field such as
 // "evidence", a node's notes, the message's takeaway, a claim's statement).
 //
-// It is an <input>, or a <textarea> when `rows` is given. Typing is sent to
-// the backend as one op through `commit`, 400 ms after the last keystroke or
-// on blur (see useSyncedText.ts). Escape leaves the field. The outliner rows'
-// own `says` line is a different component (Row.tsx) because it also handles
-// the outliner keys (Enter, Tab, ...).
-import { useRef, type KeyboardEvent } from 'react'
+// It is an <input>, or a <textarea> when `rows` is given. A textarea starts at
+// `rows` lines and grows with its content (no inner scrollbar), so a long thesis
+// or evidence is readable without resizing. Typing is sent to the backend as
+// one op through `commit`, 400 ms after the last keystroke or on blur (see
+// useSyncedText.ts). Escape leaves the field. Figure / table / equation
+// references in the text ("fig:pipeline", "\ref{tab:latency}") show as chips
+// under the field (LabelRefs.tsx). The outliner rows' own `says` line is a
+// different component (Row.tsx) because it also handles the outliner keys
+// (Enter, Tab, ...).
+import { useLayoutEffect, useRef, type KeyboardEvent } from 'react'
+import LabelRefs from './LabelRefs'
 import { useFocusOnRequest, useSyncedText } from './useSyncedText'
 
 export interface TextFieldProps {
@@ -45,6 +50,29 @@ export default function TextField({
   const areaRef = useRef<HTMLTextAreaElement>(null)
   useFocusOnRequest(focusId ?? null, rows ? areaRef : inputRef)
 
+  // Grow the textarea to fit its text (down to `rows` lines) whenever the text changes,
+  // and again whenever its width changes (columns settle after the first paint, panels
+  // open and close), since wrapping depends on the width.
+  useLayoutEffect(() => {
+    const area = areaRef.current
+    if (!area) return
+    const grow = () => {
+      area.style.height = 'auto'
+      area.style.height = `${area.scrollHeight}px`
+    }
+    grow()
+    if (typeof ResizeObserver === 'undefined') return
+    let lastWidth = area.clientWidth
+    const observer = new ResizeObserver(() => {
+      if (area.clientWidth !== lastWidth) {
+        lastWidth = area.clientWidth
+        grow()
+      }
+    })
+    observer.observe(area)
+    return () => observer.disconnect()
+  }, [text.value, rows])
+
   const common = {
     value: text.value,
     placeholder,
@@ -63,7 +91,7 @@ export default function TextField({
         <textarea
           ref={areaRef}
           rows={rows}
-          className="textarea min-h-0 w-full resize-y textarea-sm leading-snug"
+          className="textarea min-h-0 w-full resize-none overflow-hidden textarea-sm leading-snug"
           onChange={(e) => text.onChange(e.target.value)}
           {...common}
         />
@@ -75,6 +103,7 @@ export default function TextField({
           {...common}
         />
       )}
+      <LabelRefs text={text.value} />
     </label>
   )
 }

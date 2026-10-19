@@ -628,3 +628,55 @@ test('an invalid paper.json on disk: the outliner says so and Raw JSON lists the
   await page.getByRole('tab', { name: 'Raw JSON' }).click()
   await expect(page.getByTestId('raw-errors')).toContainText('Invalid JSON')
 })
+
+// ---------------------------------------------------------------------------
+// Label references and growing fields
+// ---------------------------------------------------------------------------
+
+test('spec fields grow with their text and resolve fig:/tab: references to label chips', async ({ page, request }) => {
+  await seedSpec(request, paperSpec([node('intro-1', 'section', 'Intro')]))
+  // A figure with a label in one of the mock's files.
+  await request.put(`${MOCK_URL}/api/file`, {
+    data: {
+      path: 'sections/method.tex',
+      content: '\\section{Method}\nText.\n\\begin{figure}\n\\caption{The pipeline, end to end.}\n\\label{fig:mock}\n\\end{figure}\n',
+    },
+  })
+  await openSpecTab(page)
+  const thesis = page.getByTestId('message-field-thesis')
+  await expect(thesis).toHaveJSProperty('tagName', 'TEXTAREA')
+  const oneLine = await thesis.evaluate((el) => el.clientHeight)
+  await thesis.fill('Line one\nLine two\nLine three\nLine four\nLine five\nLine six')
+  await expect.poll(() => thesis.evaluate((el) => el.clientHeight)).toBeGreaterThan(oneLine * 2)
+
+  await thesis.fill('See fig:mock and \\ref{tab:nope} for the story.')
+  const chips = page.getByTestId('message-card').getByTestId('label-ref')
+  await expect(chips).toHaveCount(2)
+  const known = chips.filter({ hasText: 'fig:mock' })
+  await expect(known).toHaveAttribute('data-found', 'true')
+  await expect(known).toHaveAttribute('data-kind', 'figure')
+  await expect(known).toContainText('The pipeline, end to end.')
+  await expect(chips.filter({ hasText: 'tab:nope' })).toHaveAttribute('data-found', 'false')
+  // Clicking a known chip opens the .tex at the \label line.
+  await known.click()
+  await expect(page.getByTestId('open-file-name')).toHaveText('sections/method.tex')
+  await expect(page.locator('.cm-activeLineGutter').first()).toHaveText('5')
+})
+
+test('claim card: "+ notes" reveals a focused notes box; a saved note keeps the box after a reload', async ({ page, request }) => {
+  await seedSpec(request, paperSpec([node('intro-1', 'section', 'Intro')], [node('c1', 'claim', 'A claim')]))
+  await openSpecTab(page)
+  const card = page.locator('[data-testid="claim-card"][data-claim-id="c1"]')
+  await expect(card.getByTestId('claim-notes')).toHaveCount(0)
+  await card.getByTestId('claim-notes-add').click()
+  const notes = card.getByTestId('claim-notes')
+  await expect(notes).toBeVisible()
+  await expect(notes).toBeFocused()
+  await expect(card.getByTestId('claim-notes-add')).toHaveCount(0)
+  await notes.fill('Needs a number.')
+  await notes.blur()
+  await expect.poll(async () => (await ops(request)).at(-1)).toEqual({ type: 'update_claim', id: 'c1', notes: 'Needs a number.' })
+  await page.reload()
+  await openSpecTab(page)
+  await expect(card.getByTestId('claim-notes')).toHaveValue('Needs a number.')
+})

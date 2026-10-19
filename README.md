@@ -39,6 +39,9 @@ cd frontend && npm install && npm run dev
 cd frontend && npm run build
 ```
 
+`examples/sample-paper-with-spec/` is the sample paper with a fully filled `paper.json` and a
+README that explains what each level of the spec is for and how to fill it.
+
 Point the app at a paper repo once with `uv run rewrite init /path/to/paper` (idempotent):
 it creates `.rewrite/` (config, prompts, sandbox, build dir), adds the gitignore lines and an
 empty `paper.json`. The backend binds to `127.0.0.1` only.

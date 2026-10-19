@@ -280,7 +280,10 @@ def test_group_request_errors(env: tuple[TestClient, Fakes, str]) -> None:
         ({"pass": "paragraph-function"}, "invalid request"),
         ({"pass": "paragraph-function", "scope": scope, "runner": "claude"}, "invalid request"),
         ({"pass": "paragraph-function", "scope": scope, "codex": {"x": 1}}, "invalid request"),
-        ({"pass": "paragraph-function", "scope": scope, "codex": {"thinking": "max"}}, "thinking"),
+        (
+            {"pass": "paragraph-function", "scope": scope, "codex": {"thinking": "ultra"}},
+            "thinking",
+        ),
     ]
     for body, fragment in bad:
         response = client.post("/api/groups/both", json=body)

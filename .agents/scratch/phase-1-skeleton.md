@@ -163,3 +163,14 @@ Desktop 29.8.2, claude 2.1.303 (claude.ai team subscription), codex 0.163.0 (Cha
 - `open http://127.0.0.1:8767/` from the shell loaded the UI in the default browser (new `GET /` in
   the server log). The backend itself has no auto-open code path (PLAN.md mentions `open`; not built,
   not a macOS defect).
+
+### 2026-10-19 — "+ New file" in the Files column
+
+- The file tree is derived from `\input` / `\include`, so a file only shows once something
+  inputs it. `POST /api/files/new {path, include_in?}` creates an empty file (folders on the
+  way too), and for a `.tex` file adds `\input{<path without .tex>}` to `include_in` (default:
+  the main file) before its `\end{document}` (appended when there is none; skipped when the
+  file is already input or included). 409 if the path exists; PUT /api/file's path rules apply.
+  `FileTree` gets a "+ New file" form at the bottom that creates, reloads the tree and opens the
+  file. Tests: `tests/test_files_new_api.py` (7), e2e in `smoke.spec.ts`; verified against the
+  real backend (file on disk, `\input` line in main.tex, tree row, compile still 3 pages).

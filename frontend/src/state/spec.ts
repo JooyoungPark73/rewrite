@@ -55,6 +55,7 @@ import { create } from 'zustand'
 import * as api from '../api/client'
 import type {
   AdoptRequest,
+  LabelInfo,
   NodeStatus,
   PaperSpec,
   ServerEvent,
@@ -114,6 +115,8 @@ export interface SpecState {
   /** Status dot per section/paragraph id. */
   status: Record<string, NodeStatus>
   skeleton: Skeleton | null
+  /** The paper's \label targets (GET /api/spec/labels), refreshed with the skeleton. */
+  labels: LabelInfo[]
   /** Row last focused or clicked in the outliner. */
   selectedId: string | null
   undoStack: PaperSpec[]
@@ -147,6 +150,7 @@ export interface SpecState {
   saveRaw: (raw: string, repoPath: string | null) => Promise<RawSaveResult>
   refreshStatus: () => Promise<void>
   refreshSkeleton: () => Promise<void>
+  refreshLabels: () => Promise<void>
   /** Adopt a heading or paragraph of the .tex (inserts a marker for paragraphs). */
   adopt: (request: AdoptRequest) => Promise<SpecResponse | null>
   /**
@@ -179,6 +183,7 @@ let writeSeq = 0 // bumped for every write requested; reloads compare it
 let loadToken = 0 // last load() wins (a quick switch A -> B must not end on A)
 let statusToken = 0 // last refreshStatus() wins
 let skeletonToken = 0 // last refreshSkeleton() wins
+let labelsToken = 0 // last refreshLabels() wins
 let reloadTimer: ReturnType<typeof setTimeout> | undefined
 let refreshTimer: ReturnType<typeof setTimeout> | undefined
 let toastTimer: ReturnType<typeof setTimeout> | undefined
@@ -264,7 +269,10 @@ export const useSpecStore = create<SpecState>()((set, get) => {
   /** Refresh status (and the skeleton) after a write, without waiting. */
   const afterWrite = (skeletonToo: boolean) => {
     void get().refreshStatus()
-    if (skeletonToo) void get().refreshSkeleton()
+    if (skeletonToo) {
+      void get().refreshSkeleton()
+      void get().refreshLabels()
+    }
   }
 
   /** Shared body of undo and redo. */
@@ -329,6 +337,7 @@ export const useSpecStore = create<SpecState>()((set, get) => {
     errors: [],
     status: {},
     skeleton: null,
+    labels: [],
     selectedId: null,
     undoStack: [],
     redoStack: [],
@@ -373,6 +382,7 @@ export const useSpecStore = create<SpecState>()((set, get) => {
       }
       void get().refreshStatus()
       void get().refreshSkeleton()
+      void get().refreshLabels()
     },
 
     reload: async () => {
@@ -464,6 +474,16 @@ export const useSpecStore = create<SpecState>()((set, get) => {
         if (token === skeletonToken) set({ skeleton: res })
       } catch {
         // Keep the old skeleton; the next file change retries.
+      }
+    },
+
+    refreshLabels: async () => {
+      const token = ++labelsToken
+      try {
+        const res = await api.getLabels()
+        if (token === labelsToken) set({ labels: res.labels })
+      } catch {
+        // Keep the old labels; the next file change retries.
       }
     },
 

@@ -177,3 +177,28 @@ test('Open dialog: the per-row Choose button fills the path without entering the
   await page.getByTestId('repo-browse').click()
   await expect(page.getByTestId('dir-browser').getByTestId('dir-current')).toHaveText('/Users/me')
 })
+
+test('Files column: "+ New file" creates the file, \\inputs it from main.tex, lists and opens it', async ({ page, request }) => {
+  await page.goto('/')
+  const tree = page.getByTestId('file-tree')
+  await tree.getByTestId('new-file-button').click()
+  const input = tree.getByTestId('new-file-path')
+  // Empty path: an inline error, nothing created.
+  await tree.getByTestId('new-file-create').click()
+  await expect(tree.getByTestId('new-file-error')).toContainText('Enter a path')
+  await input.fill('sections/related/work.tex')
+  await input.press('Enter')
+  // Listed under main.tex and opened in the editor.
+  await expect(tree.locator('[data-path="sections/related/work.tex"]')).toBeVisible()
+  await expect(page.getByTestId('open-file-name')).toHaveText('sections/related/work.tex')
+  await expect(tree.getByTestId('new-file-form')).toHaveCount(0)
+  const main = await (await request.get(`${MOCK_URL}/api/file?path=main.tex`)).json()
+  expect(main.content).toContain('\\input{sections/related/work}\n\n\\end{document}')
+  // The same path again: the backend's 409 shows inline and the form stays open.
+  await tree.getByTestId('new-file-button').click()
+  await tree.getByTestId('new-file-path').fill('sections/related/work.tex')
+  await tree.getByTestId('new-file-create').click()
+  await expect(tree.getByTestId('new-file-error')).toContainText('already exists')
+  await tree.getByTestId('new-file-path').press('Escape')
+  await expect(tree.getByTestId('new-file-form')).toHaveCount(0)
+})

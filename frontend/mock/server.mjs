@@ -536,6 +536,34 @@ async function handle(req, res) {
     })
   }
 
+  // POST /api/files/new: an empty file (409 if it exists); a .tex file is \input from main.tex
+  // before its \end{document}, as the real backend does.
+  if (route === 'POST /api/files/new') {
+    const body = await readBody(req)
+    const path = typeof body?.path === 'string' ? body.path.trim() : ''
+    if (!path || path.startsWith('/') || path.includes('..')) return sendJson(res, 400, { detail: `bad path: ${path}` })
+    if (!/\.[A-Za-z0-9]+$/.test(path)) return sendJson(res, 400, { detail: `give the file an extension (for example ${path}.tex)` })
+    if (path in state.files) return sendJson(res, 409, { detail: `${path} already exists` })
+    state.files[path] = ''
+    state.mtimes[path] = Date.now() / 1000
+    let included_by = null
+    if (path.endsWith('.tex')) {
+      const target = typeof body?.include_in === 'string' && body.include_in ? body.include_in : 'main.tex'
+      if (!(target in state.files)) return sendJson(res, 404, { detail: `file not found: ${target}` })
+      const line = `\\input{${path.slice(0, -4)}}`
+      const text = state.files[target]
+      state.files[target] = text.includes('\\end{document}') ? text.replace(/\\end\{document\}/, `${line}\n\n\\end{document}`) : `${text}${text.endsWith('\n') || !text ? '' : '\n'}${line}\n`
+      state.mtimes[target] = Date.now() / 1000
+      included_by = target
+      broadcast({ type: 'file.changed', path: target })
+    }
+    return sendJson(res, 200, {
+      path,
+      included_by,
+      files: { main: 'main.tex', files: Object.keys(state.files).map((p) => ({ path: p, included_by: p === 'main.tex' ? null : 'main.tex' })) },
+    })
+  }
+
   if (route === 'GET /api/file') {
     const path = url.searchParams.get('path') ?? ''
     if (!(path in state.files)) return sendJson(res, 404, { detail: `No such file: ${path}` })
@@ -711,6 +739,38 @@ async function handleSpec(req, res, url) {
 
   if (route === 'GET /api/spec/coverage') {
     return sendJson(res, 200, specApi.coverage(currentSpec()))
+  }
+
+  // GET /api/spec/labels: every \label in the fake files, with the enclosing environment's
+  // kind and caption (a small version of the backend's scan_labels).
+  if (route === 'GET /api/spec/labels') {
+    const labels = []
+    const seen = new Set()
+    for (const [file, text] of Object.entries(state.files)) {
+      const stack = []
+      text.split('\n').forEach((raw, i) => {
+        const line = raw.replace(/(^|[^\\])%.*$/, '$1')
+        const events = []
+        for (const m of line.matchAll(/\\(begin|end)\s*\{([^{}]+)\}/g)) events.push({ at: m.index, env: m[1], name: m[2] })
+        for (const m of line.matchAll(/\\caption\s*(?:\[[^\]]*\])?\s*\{([^{}]*)\}/g)) events.push({ at: m.index, caption: m[1] })
+        for (const m of line.matchAll(/\\label\s*\{([^{}]+)\}/g)) events.push({ at: m.index, label: m[1].trim() })
+        events.sort((a, b) => a.at - b.at)
+        for (const e of events) {
+          if (e.env === 'begin') stack.push({ name: e.name, caption: null, found: [] })
+          else if (e.env === 'end') { const top = stack.pop(); if (top) for (const f of top.found) f.caption ??= top.caption }
+          else if (e.caption !== undefined) { const top = stack.at(-1); if (top) { top.caption = e.caption.replace(/\s+/g, ' ').trim(); for (const f of top.found) f.caption ??= top.caption } }
+          else if (e.label && !seen.has(e.label)) {
+            seen.add(e.label)
+            const env = [...stack].reverse().map((s) => s.name).find((n) => /^(figure|table|equation|align|lstlisting|algorithm)/.test(n))
+            const kind = !env ? (/^sec:/.test(e.label) ? 'section' : 'other') : /^figure/.test(env) ? 'figure' : /^table/.test(env) ? 'table' : /^(equation|align)/.test(env) ? 'equation' : 'listing'
+            const info = { label: e.label, kind, file, line: i + 1, caption: stack.at(-1)?.caption ?? null }
+            stack.at(-1)?.found.push(info)
+            labels.push(info)
+          }
+        }
+      })
+    }
+    return sendJson(res, 200, { labels })
   }
 
   if (route === 'GET /api/spec/skeleton') {

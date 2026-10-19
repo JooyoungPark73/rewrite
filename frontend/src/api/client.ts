@@ -309,6 +309,22 @@ export interface Skeleton {
   paragraphs: SkeletonParagraph[]
 }
 
+/** One `\label{...}` of the paper (GET /api/spec/labels). */
+export interface LabelInfo {
+  label: string
+  /** figure | table | equation | listing | section | other */
+  kind: string
+  file: string
+  line: number
+  /** The environment's caption, or null. */
+  caption: string | null
+}
+
+/** GET /api/spec/labels: every label in document order, so spec text can refer to figures by label. */
+export function getLabels(): Promise<{ labels: LabelInfo[] }> {
+  return getJson<{ labels: LabelInfo[] }>('/api/spec/labels')
+}
+
 /** Levels that can sit in the tree below the message (Tab / Shift-Tab switch between them). */
 export type TreeLevel = 'section' | 'paragraph'
 
@@ -1063,6 +1079,18 @@ export interface DirListing {
 export function listDirs(path?: string): Promise<DirListing> {
   const query = path ? `?path=${encodeURIComponent(path)}` : ''
   return getJson<DirListing>(`/api/fs/dirs${query}`)
+}
+
+/** POST /api/files/new: create an empty file (folders too); a .tex file is also \input from `include_in` (default: main). */
+export interface FileCreated {
+  path: string
+  /** The file that got the \input line, or null for a non-.tex file. */
+  included_by: string | null
+  files: FileList
+}
+
+export function createFile(path: string, includeIn?: string | null): Promise<FileCreated> {
+  return sendJson<FileCreated>('POST', '/api/files/new', includeIn ? { path, include_in: includeIn } : { path })
 }
 
 /** GET /api/files: the main file plus every file reached via \input / \include. */

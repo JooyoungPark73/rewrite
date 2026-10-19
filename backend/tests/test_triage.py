@@ -209,7 +209,7 @@ def test_triage_request_errors(env: Env) -> None:
     assert client.post("/api/runs/nope/triage", json={}).status_code == 404
     assert client.get("/api/runs/nope/triage").status_code == 404
     run_id = env.review()["run"]["id"]
-    for body in ({"runner": "gpt"}, {"thinking": "max"}):
+    for body in ({"runner": "gpt"}, {"thinking": "ultra"}):
         response = client.post(f"/api/runs/{run_id}/triage", json=body)
         assert response.status_code == 400, response.text
     bad = client.post(f"/api/runs/{run_id}/triage", json={"model": "x", "extra": 1})

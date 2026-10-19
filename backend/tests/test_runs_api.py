@@ -269,7 +269,7 @@ def test_runners_endpoint(env: tuple[TestClient, Fakes, str, list[str]]) -> None
         "isolation": True,
         "stream": True,
     }
-    assert data["thinking_levels"] == ["low", "medium", "high"]
+    assert data["thinking_levels"] == ["low", "medium", "high", "xhigh", "max"]
     assert data["defaults"]["message"] == {"runner": "claude", "model": "opus", "thinking": "high"}
     assert data["defaults"]["sentence"] == {
         "runner": "claude",
@@ -681,7 +681,7 @@ def test_request_errors(env: tuple[TestClient, Fakes, str, list[str]]) -> None:
             "paragraph",
         ),
         ({"pass": "paragraph-function", "scope": scope, "runner": "gpt"}, "unknown runner"),
-        ({"pass": "paragraph-function", "scope": scope, "thinking": "max"}, "thinking"),
+        ({"pass": "paragraph-function", "scope": scope, "thinking": "ultra"}, "thinking"),
         ({"pass": "paragraph-function"}, "invalid request"),
         ({"pass": "paragraph-function", "scope": {"kind": "chapter"}}, "invalid request"),
         ({"pass": "paragraph-function", "scope": scope, "extra": 1}, "invalid request"),
@@ -906,3 +906,56 @@ def test_context_leaks_in_runners_and_on_runs(
     assert run["context_warning"] and str(paper / "AGENTS.md") in run["context_warning"]
     listed = next(r for r in client.get("/api/runs").json()["runs"] if r["id"] == run["id"])
     assert listed["context_warning"] == run["context_warning"]
+
+
+def test_xhigh_and_max_thinking_reach_both_clis(
+    env: tuple[TestClient, Fakes, str, list[str]],
+) -> None:
+    """Both installed CLIs accept xhigh and max (claude `--effort`, codex
+    `model_reasoning_effort`); the preview command carries the level, and a config whose
+    `thinking` table predates the two levels passes them through unchanged."""
+    client, _, section_id, _ = env
+    for runner, flag, expected in (
+        ("claude", "--effort", ["--effort", "max"]),
+        ("codex", "model_reasoning_effort", ["-c", "model_reasoning_effort=xhigh"]),
+    ):
+        level = expected[-1].split("=")[-1]
+        preview = client.post(
+            "/api/runs/preview",
+            json={
+                "pass": "paragraph-function",
+                "scope": {"kind": "section", "ref": section_id},
+                "runner": runner,
+                "thinking": level,
+            },
+        )
+        assert preview.status_code == 200, preview.text
+        command = preview.json()["command"]
+        assert preview.json()["thinking"] == level
+        i = next(i for i, arg in enumerate(command) if flag in arg)
+        assert command[i - (1 if expected[0] == "-c" else 0) :][: len(expected)] == expected
+    bad = client.post(
+        "/api/runs/preview",
+        json={
+            "pass": "paragraph-function",
+            "scope": {"kind": "section", "ref": section_id},
+            "runner": "claude",
+            "thinking": "ultra",
+        },
+    )
+    assert bad.status_code == 400 and "xhigh, max" in bad.json()["detail"]
+
+
+def test_old_three_level_thinking_table_passes_new_levels_through() -> None:
+    from app.config import RunnerCliConfig
+
+    cfg = RunnerCliConfig.model_validate(
+        {
+            "command": ["claude", "-p"],
+            "model_flag": "--model",
+            "thinking_args": ["--effort", "{thinking}"],
+            "thinking": {"low": "low", "medium": "medium", "high": "high"},
+        }
+    )
+    assert cfg.thinking.get("xhigh", "xhigh") == "xhigh"
+    assert cfg.thinking.get("max", "max") == "max"

@@ -20,12 +20,14 @@ from pydantic import BaseModel
 from app.config import ConfigError
 from app.files import (
     FileConflictError,
+    NewFile,
     NotTextError,
     PathEscapeError,
     ProtectedPathError,
     TexFile,
     TooLargeError,
     content_sha256,
+    create_file,
     normalize_rel,
     read_text_file,
     resolve_tex_tree,
@@ -62,6 +64,16 @@ class FileSaved(BaseModel):
     path: str
     mtime: float
     sha256: str = ""  # + the revision now on disk
+
+
+class FileCreate(BaseModel):
+    path: str
+    # The file that should `\input` the new .tex file; default: the main file.
+    include_in: str | None = None
+
+
+class FileCreated(NewFile):
+    files: FileList  # the tree after the change
 
 
 @contextmanager
@@ -120,3 +132,27 @@ async def put_file(body: FileWrite, repo: RepoDep, state: StateDep) -> FileSaved
     except Exception:  # the save succeeded; re-anchoring is best-effort
         log.exception("re-anchoring findings in %s failed", path)
     return FileSaved(path=path, mtime=mtime, sha256=content_sha256(body.content))
+
+
+@router.post("/files/new", response_model=FileCreated)
+async def new_file(body: FileCreate, repo: RepoDep, state: StateDep) -> FileCreated:
+    r"""Create an empty file (and its folders) under the repo. A `.tex` file also gets an
+    `\input{<path>}` line in `include_in` (default: the main file) before its
+    `\end{document}`, so it appears in the file tree. 409 if the path exists; the path
+    rules of PUT /api/file apply (400 escape, 403 protected)."""
+    try:
+        main = repo.main
+    except ConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    async with state.source_lock(repo.root):
+        with _http_errors(body.include_in or main):
+            created = await asyncio.to_thread(
+                create_file, repo.root, body.path, main=main, include_in=body.include_in
+            )
+    with _http_errors(body.path):
+        tree = resolve_tex_tree(repo.root, main)
+    return FileCreated(
+        path=created.path,
+        included_by=created.included_by,
+        files=FileList(main=tree.main, files=tree.files, missing=tree.missing),
+    )

@@ -6,8 +6,13 @@
 // whose parent is not in the list cannot be placed in the tree; it is shown
 // unindented at the end with its parent's name as a faint hint.
 // Clicking a file opens it in the editor.
-import { useMemo } from 'react'
-import type { FileEntry } from '../api/client'
+//
+// "+ New file" at the bottom creates a file through POST /api/files/new: the
+// folders in its path are created too, and a .tex file gets an \input line in
+// the main file (before \end{document}) so it appears in this list at once.
+// The new file is then opened in the editor.
+import { useMemo, useState } from 'react'
+import { createFile, errorMessage, type FileEntry } from '../api/client'
 import { useStore } from '../state/store'
 
 interface TreeRow {
@@ -60,8 +65,40 @@ export default function FileTree() {
   const openPath = useStore((s) => s.activeFile?.path ?? null)
   const openDirty = useStore((s) => s.activeFile?.dirty ?? false)
   const openFile = useStore((s) => s.openFile)
+  const loadFiles = useStore((s) => s.loadFiles)
 
   const rows = useMemo(() => buildRows(files, mainFile), [files, mainFile])
+
+  // The "+ New file" form.
+  const [adding, setAdding] = useState(false)
+  const [newPath, setNewPath] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [createError, setCreateError] = useState<string | null>(null)
+
+  const cancelAdd = () => {
+    setAdding(false)
+    setNewPath('')
+    setCreateError(null)
+  }
+  const submitAdd = async () => {
+    const path = newPath.trim()
+    if (!path) {
+      setCreateError('Enter a path, for example sections/related.tex')
+      return
+    }
+    setCreating(true)
+    setCreateError(null)
+    try {
+      const created = await createFile(path)
+      await loadFiles()
+      await openFile(created.path)
+      cancelAdd()
+    } catch (err) {
+      setCreateError(errorMessage(err))
+    } finally {
+      setCreating(false)
+    }
+  }
 
   return (
     <nav className="flex h-full flex-col overflow-y-auto bg-base-200/60 py-2 text-sm" data-testid="file-tree">
@@ -92,6 +129,52 @@ export default function FileTree() {
           )
         })}
       </ul>
+      <div className="mt-auto px-2 pt-2">
+        {adding ? (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              void submitAdd()
+            }}
+            data-testid="new-file-form"
+          >
+            <input
+              autoFocus
+              className="input input-xs w-full font-mono"
+              placeholder="sections/related.tex"
+              value={newPath}
+              onChange={(e) => setNewPath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') cancelAdd()
+              }}
+              aria-label="New file path"
+              data-testid="new-file-path"
+            />
+            {createError && (
+              <div className="mt-1 text-xs text-error" role="alert" data-testid="new-file-error">
+                {createError}
+              </div>
+            )}
+            <div className="mt-1 flex items-center gap-1">
+              <button type="submit" className="btn btn-xs btn-primary" disabled={creating} data-testid="new-file-create">
+                {creating && <span className="loading loading-xs loading-spinner" />}
+                Create
+              </button>
+              <button type="button" className="btn btn-ghost btn-xs" onClick={cancelAdd} disabled={creating}>
+                Cancel
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] leading-tight text-base-content/50">
+              Folders in the path are created. A .tex file is also \input from {mainFile ?? 'the main file'} so it shows
+              here.
+            </p>
+          </form>
+        ) : (
+          <button type="button" className="btn btn-ghost btn-xs" onClick={() => setAdding(true)} data-testid="new-file-button">
+            + New file
+          </button>
+        )}
+      </div>
     </nav>
   )
 }

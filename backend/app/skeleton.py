@@ -736,3 +736,117 @@ def place_marker(root: Path, scan: DocScan, paragraph: Paragraph, marker_id: str
 def _first_newline(text: str) -> str:
     m = re.search(r"\r\n|\r|\n", text)
     return m.group(0) if m else "\n"
+
+
+# --------------------------------------------------------------------------- labels
+
+# `\label{...}` targets the spec can refer to by name (fig:pipeline rather than "Figure 1",
+# which renumbers). Kind comes from the innermost environment the label sits in, or from a
+# heading for section labels; the caption is the `\caption{...}` of that environment.
+
+_CAPTION_RE = re.compile(r"\\caption\s*(?:\[[^\]]*\])?\s*\{")
+_FIGURE_ENVS = {"figure", "figure*", "wrapfigure", "subfigure", "sidewaysfigure"}
+_TABLE_ENVS = {"table", "table*", "sidewaystable", "longtable", "tabular"}
+_EQUATION_ENVS = {
+    "equation",
+    "equation*",
+    "align",
+    "align*",
+    "gather",
+    "gather*",
+    "multline",
+    "multline*",
+    "eqnarray",
+    "eqnarray*",
+    "flalign",
+    "flalign*",
+    "alignat",
+    "alignat*",
+}
+_LISTING_ENVS = {"lstlisting", "algorithm", "algorithmic", "algorithm2e", "listing", "minted"}
+
+
+@dataclass
+class LabelInfo:
+    label: str
+    kind: str  # figure | table | equation | listing | section | other
+    file: str
+    line: int  # 1-based line of the \label
+    caption: str | None  # the environment's caption, whitespace collapsed, or None
+
+
+def _env_kind(env: str) -> str | None:
+    if env in _FIGURE_ENVS:
+        return "figure"
+    if env in _TABLE_ENVS:
+        return "table"
+    if env in _EQUATION_ENVS:
+        return "equation"
+    if env in _LISTING_ENVS:
+        return "listing"
+    return None
+
+
+def scan_labels(scan: DocScan) -> list[LabelInfo]:
+    """Every `\\label{...}` of the scanned document, in document order (first occurrence of a
+    duplicated label wins, as in `DocScan.labels`)."""
+    heading_labels = {(h.file, h.label) for h in scan.headings if h.label}
+    heading_names = {h.label for h in scan.headings if h.label}
+    out: list[LabelInfo] = []
+    seen: set[str] = set()
+    for rel in scan.files:
+        lines = scan.lines.get(rel, [])
+        # Open environments, innermost last: (name, labels found so far, caption so far).
+        stack: list[tuple[str, list[LabelInfo], str | None]] = []
+        for lineno, raw in enumerate(lines, start=1):
+            active = strip_tex_comment(raw)
+            # Events of this line in source order, so `\begin{table}\caption{T}\label{t}\end{table}`
+            # on one line is read left to right.
+            events: list[tuple[int, str, re.Match[str]]] = []
+            events += [(m.start(), "env", m) for m in _ENV_RE.finditer(active)]
+            events += [(m.start(), "caption", m) for m in _CAPTION_RE.finditer(active)]
+            events += [(m.start(), "label", m) for m in _LABEL_RE.finditer(active)]
+            events.sort(key=lambda e: e[0])
+            for _, what, m in events:
+                if what == "env":
+                    if m.group(1) == "begin":
+                        stack.append((m.group(2).strip(), [], None))
+                    elif stack:
+                        _, found, caption = stack.pop()
+                        for info in found:
+                            if info.caption is None:
+                                info.caption = caption
+                elif what == "caption":
+                    if not stack:
+                        continue
+                    tail = active[m.end() - 1 :] + "\n" + "\n".join(lines[lineno:])
+                    content = _braces_content(tail, 0)
+                    caption = collapse(content[0]) if content else None
+                    name, found, _ = stack[-1]
+                    stack[-1] = (name, found, caption)
+                    for info in found:
+                        if info.caption is None:
+                            info.caption = caption
+                else:
+                    label = m.group(1).strip()
+                    if label in seen:
+                        continue
+                    seen.add(label)
+                    kind = "other"
+                    for name, _, _ in reversed(stack):
+                        env_kind = _env_kind(name)
+                        if env_kind:
+                            kind = env_kind
+                            break
+                    if kind == "other" and (
+                        label in heading_names or (rel, label) in heading_labels
+                    ):
+                        kind = "section"
+                    info = LabelInfo(label=label, kind=kind, file=rel, line=lineno, caption=None)
+                    if stack:
+                        name, found, caption = stack[-1]
+                        found.append(info)
+                        info.caption = caption
+                    out.append(info)
+        # Unclosed environments at the end of a file: keep whatever caption was seen.
+    return out

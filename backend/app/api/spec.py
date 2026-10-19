@@ -7,6 +7,7 @@ POST   /api/spec/ops        {op}      → {spec, raw, new_id}         404 / 400 
 GET    /api/spec/status               → {nodes: {id: {status, file, line}}}
 POST   /api/spec/nodes/{id}/reconcile → {id, status, file, line}
 GET    /api/spec/skeleton             → {sections: [...], paragraphs: [...]}
+GET    /api/spec/labels               → {labels: [{label, kind, file, line, caption}]}
 GET    /api/spec/coverage             → {claims, sections, cells, unreferenced_claims,
                                          empty_sections}   (phase 5; read-only)
 POST   /api/spec/adopt      {kind...} → {spec, raw, new_id, file, line}
@@ -447,3 +448,29 @@ async def adopt(
         )
 
     return await _run(state, work, source_of=repo)
+
+
+class LabelOut(BaseModel):
+    label: str
+    kind: str
+    file: str
+    line: int
+    caption: str | None
+
+
+class LabelList(BaseModel):
+    labels: list[LabelOut]
+
+
+@router.get("/spec/labels", response_model=LabelList, responses=ERROR_RESPONSES)
+def labels(repo: RepoDep) -> LabelList:
+    r"""Every `\label{...}` in the include tree, in document order, with the kind of the
+    environment it sits in and that environment's caption. The spec refers to figures,
+    tables and equations by label (`fig:pipeline`), which survives renumbering."""
+    scan = _scan(repo)
+    return LabelList(
+        labels=[
+            LabelOut(label=i.label, kind=i.kind, file=i.file, line=i.line, caption=i.caption)
+            for i in skeleton.scan_labels(scan)
+        ]
+    )

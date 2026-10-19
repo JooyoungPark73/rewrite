@@ -379,3 +379,67 @@ def resolve_tex_tree(root: Path, main: str, max_depth: int = 32) -> TexTree:
 
     visit(to_repo_relative(root, main_path), None, 0)
     return TexTree(main=main_rel, files=files, missing=missing)
+
+
+# --------------------------------------------------------------------------- new files
+
+
+class NewFile(BaseModel):
+    path: str  # repo-relative posix path of the created file
+    # The file that got an `\input{...}` line for it (a .tex file only), else null.
+    included_by: str | None
+
+
+_END_DOCUMENT_RE = re.compile(r"\\end\{document\}")
+
+
+def _already_included(text: str, name: str) -> bool:
+    """True when the active source of `text` already inputs/includes `name` (`.tex` optional)."""
+    pattern = re.compile(
+        r"\\(?:input|include|subfile)\s*\{\s*" + re.escape(name) + r"(?:\.tex)?\s*\}"
+    )
+    return any(pattern.search(line) for line in _active_source(text))
+
+
+def add_input_line(text: str, name: str) -> str:
+    r"""`text` with `\input{name}` added before its last `\end{document}` line (appended
+    when there is none); unchanged when the file already inputs or includes `name`."""
+    if _already_included(text, name):
+        return text
+    line = f"\\input{{{name}}}"
+    lines = text.split("\n")
+    end_index = None
+    for i, raw in enumerate(lines):
+        if _END_DOCUMENT_RE.search(strip_tex_comment(raw)):
+            end_index = i
+    if end_index is None:
+        body = text if not text or text.endswith("\n") else text + "\n"
+        return body + line + "\n"
+    # A blank line between the new \input and \end{document}, as authors usually leave.
+    lines[end_index:end_index] = [line, ""]
+    return "\n".join(lines)
+
+
+def create_file(root: Path, rel: str, *, main: str, include_in: str | None = None) -> NewFile:
+    r"""Create an empty file at `rel` (folders on the way too). A `.tex` file is then
+    `\input` from `include_in` (default: the main file) so it shows in the file tree.
+
+    Refuses an existing path (FileConflictError) and the paths PUT /api/file refuses.
+    """
+    rel_norm = normalize_rel(rel)
+    path = resolve_in_repo(root, rel)
+    if is_protected_for_write(rel) or is_protected_for_write(to_repo_relative(root, path)):
+        raise ProtectedPathError(f"this path cannot be written through the file API: {rel}")
+    if path.exists():
+        raise FileConflictError(f"{rel_norm} already exists")
+    if not path.suffix:
+        raise PathEscapeError(f"give the file an extension (for example {rel_norm}.tex)")
+    atomic_write_text(path, "")
+    if path.suffix != ".tex":
+        return NewFile(path=rel_norm, included_by=None)
+    target = normalize_rel(include_in or main)
+    text, _ = read_text_file(root, target)
+    updated = add_input_line(text, rel_norm[: -len(".tex")])
+    if updated != text:
+        write_text_file(root, target, updated)
+    return NewFile(path=rel_norm, included_by=target)

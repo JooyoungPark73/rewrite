@@ -15,7 +15,7 @@ from typing import Any, Literal
 import tomli_w
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
-Thinking = Literal["low", "medium", "high"]
+Thinking = Literal["low", "medium", "high", "xhigh", "max"]
 
 
 class _Section(BaseModel):
@@ -45,7 +45,11 @@ class CompilerConfig(_Section):
 
 RunnerName = Literal["claude", "codex"]
 RUNNER_NAMES: tuple[str, ...] = ("claude", "codex")
-THINKING_LEVELS: tuple[str, ...] = ("low", "medium", "high")
+# Both installed CLIs accept all five (claude 2.1.303 `--effort`; codex 0.163.0
+# `model_reasoning_effort`, whose API answers "Supported values are: none, minimal, low,
+# medium, high, xhigh, max" for an unknown one). A level missing from a repo's
+# `[runner.<x>].thinking` table is passed to the CLI as is (`RunnerCliConfig.thinking.get`).
+THINKING_LEVELS: tuple[str, ...] = ("low", "medium", "high", "xhigh", "max")
 PASS_LEVELS: tuple[str, ...] = ("message", "claim", "section", "paragraph", "sentence")
 
 
@@ -93,7 +97,7 @@ CLAUDE_DEFAULTS: dict[str, Any] = {
     ],
     "model_flag": "--model",
     "thinking_args": ["--effort", "{thinking}"],
-    "thinking": {"low": "low", "medium": "medium", "high": "high"},
+    "thinking": {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"},
     "schema_args": ["--json-schema", "{schema}"],
     "no_tools_args": [],  # `--tools ""` is part of the command
     # `--setting-sources ""`: no user, project or local source. With `project` claude loads
@@ -130,7 +134,7 @@ CODEX_DEFAULTS: dict[str, Any] = {
     ],
     "model_flag": "-m",
     "thinking_args": ["-c", "model_reasoning_effort={thinking}"],
-    "thinking": {"low": "low", "medium": "medium", "high": "high"},
+    "thinking": {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"},
     "schema_args": ["--output-schema", "{schema_file}"],
     # `--sandbox read-only` still lets the model run (read-only) shell commands; these
     # feature switches remove the shell tools.
@@ -299,7 +303,7 @@ command = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--too
 "--no-session-persistence"]
 model_flag = "--model"
 thinking_args = ["--effort", "{{thinking}}"]
-thinking = {{ low = "low", medium = "medium", high = "high" }}   # also: xhigh, max
+thinking = {{ low = "low", medium = "medium", high = "high", xhigh = "xhigh", max = "max" }}
 schema_args = ["--json-schema", "{{schema}}"]
 no_tools_args = []
 isolation_args = ["--setting-sources", "", "--strict-mcp-config"]
@@ -327,7 +331,7 @@ command = ["codex", "exec", "--json", "--sandbox", "read-only", "--skip-git-repo
 "--ephemeral", "-c", "project_doc_max_bytes=0", "-c", "project_root_markers=[]"]
 model_flag = "-m"
 thinking_args = ["-c", "model_reasoning_effort={{thinking}}"]
-thinking = {{ low = "low", medium = "medium", high = "high" }}   # also: xhigh, max
+thinking = {{ low = "low", medium = "medium", high = "high", xhigh = "xhigh", max = "max" }}
 schema_args = ["--output-schema", "{{schema_file}}"]
 no_tools_args = ["--disable", "shell_tool", "--disable", "unified_exec"]
 isolation_args = ["--ignore-user-config", "--ignore-rules"]

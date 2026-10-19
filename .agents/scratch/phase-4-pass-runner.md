@@ -330,3 +330,13 @@ Not verified:
   claude.ai (team subscription) and codex via ChatGPT; `~/.claude/CLAUDE.md` and
   `~/.codex/AGENTS.md` absent. Sandbox holds only `AGENTS.md` and `CLAUDE.md` after the runs.
 - Cost of the whole acceptance: roughly $0.35 across p4, p5, p6 (twice) and the API probes.
+
+### 2026-10-19 — thinking levels xhigh and max
+
+- The UI and `THINKING_LEVELS` now expose `low | medium | high | xhigh | max` for both runners.
+  claude 2.1.303 lists them in `--effort`; codex 0.163.0's API answers "Supported values are:
+  none, minimal, low, medium, high, xhigh, max" to an unknown `model_reasoning_effort`, and a
+  `max` run started normally. The default `[runner.*].thinking` tables map all five; an older
+  config.toml with three keys passes the new levels through unchanged
+  (`RunnerCliConfig.thinking.get(level, level)`). Tests: `test_xhigh_and_max_thinking_reach_both_clis`,
+  `test_old_three_level_thinking_table_passes_new_levels_through`.

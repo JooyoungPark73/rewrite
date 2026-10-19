@@ -74,6 +74,9 @@ export default function ClaimBank() {
 function ClaimCard({ claim, uses }: { claim: SpecNode; uses: number }) {
   const applyOp = useSpecStore((s) => s.applyOp)
   const [confirming, setConfirming] = useState(false)
+  // The notes box is shown when the claim has a note, or after "+ notes" was clicked.
+  const [notesOpen, setNotesOpen] = useState(false)
+  const showNotes = notesOpen || claim.notes !== ''
   const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
     id: claimDragId(claim.id),
     data: { kind: 'claim', claimId: claim.id } satisfies DragData,
@@ -151,10 +154,11 @@ function ClaimCard({ claim, uses }: { claim: SpecNode; uses: number }) {
             commit={(value) => applyOp({ type: 'update_claim', id: claim.id, fields: { [key]: value } })}
             label={fieldLabel(key)}
             placeholder={fieldLabel(key)}
+            rows={2}
             testId={`claim-field-${key}`}
           />
         ))}
-        {claim.notes && (
+        {showNotes ? (
           <TextField
             syncKey={`claim:${claim.id}:notes`}
             value={claim.notes}
@@ -163,7 +167,21 @@ function ClaimCard({ claim, uses }: { claim: SpecNode; uses: number }) {
             caption
             rows={2}
             testId="claim-notes"
+            focusId={`${claim.id}:notes`}
+            placeholder="A doubt, a TODO, where to look…"
           />
+        ) : (
+          <button
+            type="button"
+            className="self-start text-[11px] text-base-content/50 hover:text-base-content"
+            onClick={() => {
+              setNotesOpen(true)
+              useSpecStore.getState().requestFocus(`${claim.id}:notes`)
+            }}
+            data-testid="claim-notes-add"
+          >
+            + notes
+          </button>
         )}
       </div>
     </div>

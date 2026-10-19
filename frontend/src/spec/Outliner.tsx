@@ -128,6 +128,7 @@ function MessageCard({ node }: { node: SpecNode }) {
             commit={(value) => applyOp({ type: 'update', id: node.id, fields: { [key]: value } })}
             label={fieldLabel(key)}
             caption
+            rows={2}
             testId={`message-field-${key}`}
           />
         ))}

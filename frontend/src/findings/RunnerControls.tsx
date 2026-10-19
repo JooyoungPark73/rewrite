@@ -116,7 +116,7 @@ export default function RunnerControls({
         data-testid={`${testIdPrefix}thinking-select`}
       >
         <option value="">thinking: default ({defaultThinking ?? '?'})</option>
-        {(runners?.thinking_levels ?? ['low', 'medium', 'high']).map((t) => (
+        {(runners?.thinking_levels ?? ['low', 'medium', 'high', 'xhigh', 'max']).map((t) => (
           <option key={t} value={t}>
             thinking: {t}
           </option>

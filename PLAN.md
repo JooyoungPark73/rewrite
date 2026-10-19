@@ -146,7 +146,7 @@ Runner details:
 - Prompt goes in via stdin, never argv.
 - cwd is `.rewrite/sandbox/`, tools disabled, structured-output flag when the installed CLI supports it, fenced-JSON parse as fallback.
 - `claude -p --model <m> --output-format stream-json` and `codex exec -m <m> -c model_reasoning_effort=<level> --sandbox read-only --json`. Exact flags live in `config.toml` under `[runner.claude]` and `[runner.codex]`; phase 4 verifies them against `claude --help` and `codex exec --help` on the target machine.
-- Thinking level is exposed as low / medium / high in the UI and mapped per runner in config.
+- Thinking level is exposed as low / medium / high / xhigh / max in the UI (both installed CLIs accept all five, verified 2026-10-19) and mapped per runner in config.
 - Events are forwarded over a WebSocket for progress; cancel kills the process group. One run per scope at a time, concurrency cap of 3 overall.
 - Known caveat: both CLIs inject global instruction files regardless of cwd. Record in config whether the installed version has a flag to suppress them; if not, keep the global files harmless to prose review.
 

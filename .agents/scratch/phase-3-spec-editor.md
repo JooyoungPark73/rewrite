@@ -262,3 +262,18 @@ Not verified / open:
   header lights up). The header drop failed twice before I brought the window to the front and
   moved the pointer in more steps; with those it passes, so the failures were the harness
   (unfocused headed window), not the app. Not verified: a human hand on a trackpad.
+
+### 2026-10-19 — growing fields and label references
+
+- Every spec text field (message problem/stakes/thesis, claim evidence/scope, section and
+  paragraph fields, notes) is a textarea that starts at two rows and grows with its text
+  (`TextField.tsx`: height = scrollHeight on every change and on width changes via a
+  ResizeObserver, since wrapping depends on the width; the first version measured once at
+  mount, before the columns settled, and clipped to one line).
+- Figures, tables and equations are referred to by `\label` in spec text (`fig:pipeline`,
+  `\ref{tab:latency}`), never by number. `GET /api/spec/labels` (`skeleton.scan_labels`) lists
+  every label with the kind of its environment (figure / table / equation / listing / section /
+  other) and that environment's caption; `LabelRefs.tsx` renders the references found in a field
+  as chips under it (caption shown, click opens the `.tex` at the `\label` line, unknown labels
+  flagged). Tests: `tests/test_labels.py` (4), e2e in `spec.spec.ts`. The
+  `examples/sample-paper-with-spec` spec uses labels throughout.

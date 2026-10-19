@@ -96,7 +96,7 @@ const RUNNERS = {
       warning: null,
     },
   ],
-  thinking_levels: ['low', 'medium', 'high'],
+  thinking_levels: ['low', 'medium', 'high', 'xhigh', 'max'],
   defaults: {
     message: { runner: 'claude', model: 'opus', thinking: 'high' },
     claim: { runner: 'claude', model: 'opus', thinking: 'high' },
