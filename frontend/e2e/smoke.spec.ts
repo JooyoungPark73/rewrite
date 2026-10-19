@@ -45,14 +45,14 @@ test('open a file, edit, Ctrl-S saves, dirty marker clears, compile follows', as
   await expect(content).toContainText('\\section{Introduction}')
 
   await content.click()
-  await page.keyboard.press('Control+End')
+  await page.keyboard.press('ControlOrMeta+End')
   await page.keyboard.type('Added by the smoke test.')
   await expect(page.getByTestId('dirty-marker')).toBeVisible()
 
   const put = page.waitForRequest((r) => r.url().endsWith('/api/file') && r.method() === 'PUT')
   // Save should be followed by a compile after the 800 ms debounce, with no click.
   const autoCompile = page.waitForRequest((r) => r.url().endsWith('/api/compile') && r.method() === 'POST')
-  await page.keyboard.press('Control+s')
+  await page.keyboard.press('ControlOrMeta+s')
   await put
   await expect(page.getByTestId('dirty-marker')).toHaveCount(0)
 

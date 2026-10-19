@@ -241,3 +241,24 @@ Not verified / open:
   until re-linked via ⋯ → Insert marker); "says as a comment" is a second write done by the frontend;
   the watcher does not watch `paper.json` itself (external edits need a refetch; phase 5 adds this
   with git pull).
+
+### macOS acceptance 2026-10-19
+
+| Check | Result | How |
+| --- | --- | --- |
+| 1 adopt `\section{Introduction}` → section row, empty says | pass | p3 live (`introduction-1`, linked) |
+| 2 adopt a paragraph → `% @p` marker, row "linked" | pass | p3 (`p-1`, marker on intro.tex:4) |
+| 3 prose edit → stale; says edit → linked | pass | p3 (stale, then linked via Reconcile) plus an API probe on the real backend: stale after a prose edit, linked again after an `update {says}` op |
+| 4 delete the marker line → orphaned | pass | API probe: `PUT /api/file` without the `% @p p-9` line → `GET /api/spec/status` orphaned, line null |
+| 5 Tab / Shift-Tab swap level, notes keep the old fields | pass | p3 |
+| 6 drag a claim chip onto a section → claims updated, 1-line diff | pass | headless drag on the real backend: `design-1.claims = ["c1"]`, `git diff --numstat paper.json` = `1 1` |
+| 7 Ctrl/Cmd-Z undoes and the file follows | pass | p3 (`ControlOrMeta+z`, `ControlOrMeta+Shift+z` rewrite paper.json) |
+| 8 `git diff paper.json` after an edit is one or two lines | pass | `1 1 paper.json` after one says edit |
+
+- p3 live: 24/24 after the chord fix (`Control+s/z` → `ControlOrMeta`).
+- Outliner in a headed Chromium window (real mouse and keys): ArrowDown moves focus p-1 → p-2;
+  Alt+ArrowDown / Alt+ArrowUp reorder and paper.json follows; dragging a paragraph's handle onto
+  another paragraph row reorders; dragging it onto a section header appends to that section (the
+  header lights up). The header drop failed twice before I brought the window to the front and
+  moved the pointer in more steps; with those it passes, so the failures were the harness
+  (unfocused headed window), not the app. Not verified: a human hand on a trackpad.

@@ -187,7 +187,7 @@ test('no forward sync while typing or with unsaved edits; Sync button forces it'
   expect((await forwardRequests(request))[1]).toMatchObject({ file: 'sections/intro.tex', line: 3 })
 
   // After saving, cursor movement syncs again.
-  await page.keyboard.press('Control+s')
+  await page.keyboard.press('ControlOrMeta+s')
   await expect(page.getByTestId('dirty-marker')).toHaveCount(0)
   await clickLine(page, 1)
   await expect

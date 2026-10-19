@@ -3,21 +3,34 @@
 Source of truth: `PLAN.md` at the repo root. This directory holds one brief per
 phase, each with scope, file layout, API contract, tests and manual checks.
 PLAN.md's definition of done is that a phase's manual checks pass on macOS.
-Every phase below is implemented and its checks were run headlessly on Linux
-(automated suites plus Playwright against the real backend); macOS acceptance
-is pending for all of them and is not claimed. Each brief's status section
-lists exactly what was and was not verified.
+Every phase below is implemented; its checks were run headlessly on Linux
+(2026-10-18) and then on macOS (2026-10-19: automated suites, the live scripts
+against the real backend with real claude/codex calls, headed-Chromium passes
+for the gestures, and API probes). Phases 1, 2, 3 and 5 are macOS-verified;
+phases 4 and 6 have two checks each that could only be verified in part (see
+their briefs). Each brief's status section lists exactly what was and was not
+verified, with a `### macOS acceptance 2026-10-19` table per phase.
 
 | Phase | Brief | Status |
 | --- | --- | --- |
-| 1 Skeleton | `phase-1-skeleton.md` | Linux-verified 2026-10-18; macOS pending |
-| 2 SyncTeX + Docker | `phase-2-synctex-docker.md` | Linux-verified 2026-10-18; macOS pending |
-| 3 Spec editor | `phase-3-spec-editor.md` | Linux-verified 2026-10-18; macOS pending |
-| 4 Pass runner | `phase-4-pass-runner.md` | Linux-verified 2026-10-18; macOS pending |
-| 5 A/B, git, coverage | `phase-5-ab-git-coverage.md` | Linux-verified 2026-10-18; macOS pending |
-| 6 Polish | `phase-6-polish.md` | Linux-verified 2026-10-18; macOS pending (Tauri wrap documented, not built) |
+| 1 Skeleton | `phase-1-skeleton.md` | macOS-verified 2026-10-19 (Linux 2026-10-18) |
+| 2 SyncTeX + Docker | `phase-2-synctex-docker.md` | macOS-verified 2026-10-19 (Linux 2026-10-18) |
+| 3 Spec editor | `phase-3-spec-editor.md` | macOS-verified 2026-10-19 (Linux 2026-10-18) |
+| 4 Pass runner | `phase-4-pass-runner.md` | Linux-verified 2026-10-18; macOS 2026-10-19: checks 1–5 pass, 6–7 partial (clipboard copy not verified; a rewrite-baiting pass yields no rejected findings under claude's structured output, validator proven via paste-back) |
+| 5 A/B, git, coverage | `phase-5-ab-git-coverage.md` | macOS-verified 2026-10-19 (Linux 2026-10-18); push/pull against a real GitHub remote still open (gh token invalid on this machine) |
+| 6 Polish | `phase-6-polish.md` | Linux-verified 2026-10-18; macOS 2026-10-19: checks 1 and 3 pass, 2 partial (the model flagged nothing trivial, so "Dismiss all flagged" never ran); Tauri wrap documented, not built |
 
-## Environment facts (this machine, 2026-10-18)
+## Environment facts (macOS acceptance machine, 2026-10-19)
+
+- macOS 27.0.1 on arm64, uv 0.12.21 (Python 3.12.8), node 26.10.0, npm 11.19.1, git 2.54.0
+  (Apple Git-157), MacTeX (TeX Live 2026): latexmk 4.87, synctex CLI 1.5, Docker Desktop 29.8.2,
+  claude 2.1.303 (claude.ai team subscription), codex 0.163.0 (ChatGPT), gh 2.102.0 with an
+  invalid keyring token (SSH to GitHub works).
+- `$TMPDIR` is under `/var/folders` (→ `/private/var`); the sample paper served from there
+  compiles and syncs both ways.
+- Logs and screenshots of the acceptance runs: `~/rewrite-live/` (not in the repo).
+
+## Environment facts (Linux build machine, 2026-10-18)
 
 - Linux (Ubuntu 24.04-class), Python 3.12.3, uv 0.13.1, node 24, npm 11, docker 29, git 2.43.
 - `claude` 2.1.302 and `codex` 0.162.1 are installed. Help output captured for

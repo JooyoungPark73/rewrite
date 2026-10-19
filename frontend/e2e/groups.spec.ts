@@ -167,7 +167,11 @@ test('Run both: 2/2 runs, merged view with the agreement first, j / k, click hig
   // Merged view: the agreement first, then claude's two other findings.
   await expect(page.getByTestId('group-detail-status')).toHaveText('done')
   await expect(entries(page)).toHaveCount(3)
-  expect(await entries(page).evaluateAll((els) => els.map((e) => e.getAttribute('data-agreement')))).toEqual(['2', '1', '1'])
+  // The status badge follows the `group.updated` event; the merged list is refetched a
+  // debounce later, so poll instead of reading the attributes once (raced on macOS).
+  await expect
+    .poll(() => entries(page).evaluateAll((els) => els.map((e) => e.getAttribute('data-agreement'))))
+    .toEqual(['2', '1', '1'])
   const agreed = entries(page).first()
   await expect(agreed.getByTestId('agreement-badge')).toHaveText('2/2 agree')
   await expect(agreed.getByTestId('agreement-badge')).toHaveClass(/badge-success/)

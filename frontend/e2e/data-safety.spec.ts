@@ -157,7 +157,7 @@ const editorText = (page: Page) => page.locator('[data-testid="editor"] .cm-cont
 /** Type at the end of the source editor. */
 async function typeAtEnd(page: Page, text: string) {
   await editorText(page).click()
-  await page.keyboard.press('Control+End')
+  await page.keyboard.press('ControlOrMeta+End')
   await page.keyboard.type(text)
 }
 
@@ -172,7 +172,7 @@ const rawEditor = (page: Page) => page.getByTestId('raw-json').locator('.cm-cont
 /** Replace the whole Raw JSON text. */
 async function replaceRaw(page: Page, text: string) {
   await rawEditor(page).click()
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.insertText(text)
 }
 
@@ -379,7 +379,7 @@ for (const how of ['button', 'keyboard'] as const) {
     const held = await holdNext(page, 'PUT', '**/api/spec/raw')
 
     if (how === 'button') await page.getByTestId('raw-save').click()
-    else await page.keyboard.press('Control+s')
+    else await page.keyboard.press('ControlOrMeta+s')
     await held.sent
     await replaceRaw(page, specText({ id: 'a-1', says: 'SECOND UNSAVED EDIT WHILE SAVING' }))
     held.release()
@@ -413,7 +413,7 @@ test('item 5: a save over a file changed on disk is refused (409); the buffer st
   await request.put(`${MOCK_URL}/api/file`, { data: { path: 'sections/intro.tex', content: external } })
 
   const put = page.waitForRequest((r) => r.url().endsWith('/api/file') && r.method() === 'PUT')
-  await page.keyboard.press('Control+s')
+  await page.keyboard.press('ControlOrMeta+s')
   const body = (await put).postDataJSON()
   await page.waitForTimeout(300) // let the answer arrive
   // Nothing was overwritten and nothing was lost.
@@ -438,7 +438,7 @@ test('item 5: a save over a file changed on disk is refused (409); the buffer st
 
   // Saves are based on the reloaded revision from now on.
   await typeAtEnd(page, 'AFTER RELOAD')
-  await page.keyboard.press('Control+s')
+  await page.keyboard.press('ControlOrMeta+s')
   await expect(page.getByTestId('dirty-marker')).toHaveCount(0)
   expect(await diskFile(request, 'sections/intro.tex')).toContain('EXTERNAL VERSION\nAFTER RELOAD')
 })
@@ -468,7 +468,7 @@ test('item 6: an external change clears undo history, so undo cannot remove it',
   await expect(saysInput(page, 'method-1')).toHaveValue('EXTERNAL CHANGE')
 
   // Ctrl-Z with the focus still in the edited row (the global spec undo key).
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await page.waitForTimeout(300)
   expect((await specWrites(request)).filter((w) => w.path === '/api/spec')).toEqual([])
   expect(await diskSpec(request)).toContain('EXTERNAL CHANGE')

@@ -79,7 +79,8 @@ async function waitForGroup(id, timeout) {
 }
 /** Number of `claude -p` processes right now (informational: other sessions may run some too). */
 function claudeProcesses() {
-  try { return execFileSync('pgrep', ['-fc', 'claude -p'], { encoding: 'utf8' }).trim() * 1; } catch { return 0; }
+  // `pgrep -c` is GNU-only (macOS's BSD pgrep rejects it), so count the lines of `-f` instead.
+  try { return execFileSync('pgrep', ['-f', 'claude -p'], { encoding: 'utf8' }).split('\n').filter(Boolean).length; } catch { return 0; }
 }
 
 const browser = await chromium.launch();

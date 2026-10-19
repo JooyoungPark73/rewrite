@@ -246,3 +246,18 @@ Not verified / open:
 - Manual checks 1–4 verified headlessly on Linux. Not verified: macOS; pull through the UI against
   a remote with new commits (API-level pull verified by the backend agent with a second clone);
   real Overleaf/GitHub remotes; a codex comparison.
+
+### macOS acceptance 2026-10-19
+
+| Check | Result | How |
+| --- | --- | --- |
+| 1 commit from the panel; push / pull against a local bare remote | pass | p5 live 27/27 (commit, push `git.finished ok`, HEAD == upstream). Headed Chromium on a second repo with a bare origin: `Cmd-Enter` in the message box commits; Push → "git push: ok", bare HEAD == local; a second clone pushed a commit, Pull → "git pull: ok", the working tree and the editor show the pulled line |
+| 2 flag major revision → tag; blind compare → verdict, then mapping | pass | p5: `rewrite/rev-2-v2`; compare p-3 vs snapshot v1 with claude sonnet done in 4.2 s, verdict + reason first, mapping hidden until Reveal, Reveal matches `?reveal=true` |
+| 3 coverage matrix follows link / unlink | pass | p5: new claim shows as unreferenced, cell click links it (matrix, paper.json, API) |
+| 4 select a sentence → Lift to claim | pass | p5: right-click menu on p-3, claim c2 created and linked, shown in the claim bank |
+
+- Not verified: push and pull against a real GitHub remote. `gh auth status` reports the keyring
+  token invalid, so no scratch repository could be created (SSH to github.com authenticates fine).
+  Run `gh auth refresh -h github.com`, create an empty private repo, `git remote add` it to an
+  initialised copy of the sample paper and use the panel's Push / Pull. Also not verified: an
+  Overleaf remote; a codex comparison.

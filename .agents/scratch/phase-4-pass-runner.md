@@ -313,3 +313,20 @@ Not verified:
 - Judgment calls: codex gets `--disable shell_tool --disable unified_exec` because `--sandbox
   read-only` alone still let the model run `ls`; any tool event aborts the run; the editor column
   shows only the newest run per pass+scope.
+
+### macOS acceptance 2026-10-19
+
+| Check | Result | How |
+| --- | --- | --- |
+| 1 `paragraph-function` on one section with claude: stream, findings, highlights | pass | p4 live 20/20: 3 findings, 22 stream events, $0.0341, 7,061/584 tokens, highlight on the quoted text, j/k, Addressed |
+| 2 same with codex | pass | API probe: codex (thinking low) on the Introduction → done, 1 finding, 17,620/274 tokens, no cost; also the codex member of the p6 "Run both" group |
+| 3 cancel mid-run, process gone | pass | cancel 1.5 s after start → `cancelled`; `pgrep -f 'claude -p'` 0 → 1 → 0 |
+| 4 re-run unchanged scope → cached badge | pass | p4 (`status cached`, `cached_from` set) |
+| 5 edit the quoted paragraph → re-anchor or stale | pass | two lines inserted above the quote → `moved` (5 → 7); quote reworded → `stale` |
+| 6 Show prompt = stored prompt; copy prompt; paste-back parses | pass / partial | Show prompt identical to `GET /api/runs/{id}/prompt` (9,743 chars); paste-back of a fenced JSON answer → 1 finding, 2 rejected (`unknown_field:replacement`, `praise`). Clipboard "copy prompt" not verified (no clipboard in the harness) |
+| 7 a pass edited to ask for rewrites → rejected findings in run detail | partial | a hot-loaded `rewrite-bait` pass demanding a `replacement` key ran on claude sonnet: 2 findings, 0 rejected — claude's `--json-schema` structured output never lets the model emit the extra key (same on Linux, where rejection was verified through paste-back only). The validator and the run-detail "rejected" list are verified via paste-back (check 6) |
+
+- Both CLIs log in through the macOS keychain: `GET /api/runners` reports claude `logged_in` via
+  claude.ai (team subscription) and codex via ChatGPT; `~/.claude/CLAUDE.md` and
+  `~/.codex/AGENTS.md` absent. Sandbox holds only `AGENTS.md` and `CLAUDE.md` after the runs.
+- Cost of the whole acceptance: roughly $0.35 across p4, p5, p6 (twice) and the API probes.

@@ -135,3 +135,31 @@ screens tabs switch panes. Save → debounced compile (800 ms) via the store.
 - Deviations recorded by the implementers: Tailwind v4 + DaisyUI 5, oxlint instead of ESLint;
   `PUT /api/file` refuses `paper.json`, `.git/`, build and sandbox paths; Host/Origin checks
   on the server; `.bib` files appear in the tree; `CompileResult` carries `synctex` and `exit_code`.
+
+### macOS acceptance 2026-10-19
+
+Machine: macOS 27.0.1 (arm64), uv 0.12.21 (Python 3.12.8), node 26.10.0 / npm 11.19.1, git 2.54.0
+(Apple Git-157), MacTeX: latexmk 4.87 + synctex 1.5 (TeX Live 2026, `/Library/TeX/texbin`), Docker
+Desktop 29.8.2, claude 2.1.303 (claude.ai team subscription), codex 0.163.0 (ChatGPT), gh 2.102.0
+(keyring token invalid). Live scripts ran from `frontend/e2e/live/run-all.sh ~/rewrite-live`.
+
+| Check | Result | How |
+| --- | --- | --- |
+| 1 `rewrite init` twice changes nothing | pass | second init on a committed repo: `git status --porcelain` empty |
+| 2 `/api/health` tools + repo | pass | all five tools true, repo path resolved to `/private/var/...` |
+| 3 file tree: main + every `\input` | pass | p1 live script (main.tex + 4 sections + refs.bib) |
+| 4 Ctrl/Cmd-S writes, dirty marker clears | pass | p1 (ControlOrMeta = Cmd on macOS) and a headed-Chromium pass with a real `Meta+s` |
+| 5 compile → `.rewrite/build/main.pdf`, PDF pane | pass | p1 (3 pages on canvas) |
+| 6 `\undefinedmacro` in the error list, click opens the line | pass | p1 (`sections/method.tex:3`) |
+| 7 listens on 127.0.0.1 only | pass | `lsof -nP -iTCP:8765 -sTCP:LISTEN` → `127.0.0.1:8765` only |
+| 8 pytest / ruff / build / tsc | pass | 597 passed, 3 skipped (Docker-gated; 19/19 with `REWRITE_TEST_DOCKER=1`); ruff clean; typecheck, oxlint, build clean |
+
+- p1 live: 18/18. First run failed at the `\undefinedmacro` step: the script pressed `Control+Home`
+  / `Control+End`, which CodeMirror binds as `Mod-Home` / `Mod-End` (Cmd on macOS), so the text was
+  typed on the wrong line. Script assumption, not an app defect: the live scripts and the headless
+  suite now press `ControlOrMeta+<key>` (Playwright's platform modifier); `e2e/portability.spec.ts`
+  guards against a bare `Control+` chord coming back. Headless suite: 60/66 before the fix, 68/68
+  after (66 + the 2 guard tests).
+- `open http://127.0.0.1:8767/` from the shell loaded the UI in the default browser (new `GET /` in
+  the server log). The backend itself has no auto-open code path (PLAN.md mentions `open`; not built,
+  not a macOS defect).

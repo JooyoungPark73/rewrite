@@ -235,7 +235,7 @@ test('Commit sends the ticked files, clears them from the list and adds a log en
   await page.getByTestId('git-check-all').click()
   // Commit the rest with Ctrl-Enter: the tree is clean.
   await page.getByTestId('git-message').fill('Add notes')
-  await page.getByTestId('git-message').press('Control+Enter')
+  await page.getByTestId('git-message').press('ControlOrMeta+Enter')
   await expect(page.getByTestId('git-clean')).toBeVisible()
   await expect(page.getByTestId('git-badge')).toHaveText('0')
   await expect(page.getByTestId('git-commit-subject').first()).toHaveText('Add notes')
@@ -484,7 +484,7 @@ test('Selection menu: lift to claim, set as message, set as thesis, and Undo fro
   // Ctrl-. opens the same menu from the keyboard: Set as thesis.
   await openFile(page, INTRO_FILE)
   line = await selectLine(page, FIRST_SENTENCE)
-  await page.keyboard.press('Control+Period')
+  await page.keyboard.press('ControlOrMeta+Period')
   await expect(menu(page)).toBeVisible()
   await expect(menu(page).getByTestId('ctx-set-message')).toBeFocused()
   await menu(page).getByTestId('ctx-set-thesis').click()
@@ -516,7 +516,7 @@ test('Selection menu outside an adopted paragraph: "Adopt this paragraph first",
   // Nothing selected: no custom menu (the browser's own would show).
   await page.locator('.cm-content .cm-line', { hasText: FIRST_SENTENCE }).click()
   await page.keyboard.press('End')
-  await page.keyboard.press('Control+Period')
+  await page.keyboard.press('ControlOrMeta+Period')
   await expect(menu(page)).toHaveCount(0)
 
   const line = await selectLine(page, FIRST_SENTENCE)

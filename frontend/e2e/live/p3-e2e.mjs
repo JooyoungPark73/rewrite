@@ -118,7 +118,7 @@ check('status dot opens the marker line in the editor', inEditor && Number(gutte
 await page.keyboard.press('ArrowDown'); // first line of the paragraph
 await page.keyboard.press('End');
 await page.keyboard.type(APPENDED);
-await page.keyboard.press('Control+s');
+await page.keyboard.press('ControlOrMeta+s');
 check('appended text saved to disk', !!(await waitFor(() => readTex().includes(APPENDED.trim()))));
 await page.waitForTimeout(500); // let the cursor report settle (the active-row highlight)
 await page.getByTestId('tab-spec').click();
@@ -168,9 +168,9 @@ if (afterRoundTrip !== 'linked') {
 // ---- Undo: Ctrl-Z restores the previous paper.json -----------------------------
 const beforeUndo = readSpec();
 await page.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => {});
-await page.keyboard.press('Control+z');
+await page.keyboard.press('ControlOrMeta+z');
 check('Ctrl-Z rewrites paper.json (undo)', !!(await waitFor(() => readSpec() !== beforeUndo)));
-await page.keyboard.press('Control+Shift+z');
+await page.keyboard.press('ControlOrMeta+Shift+z');
 check('Ctrl-Shift-Z restores it (redo)', !!(await waitFor(() => readSpec() === beforeUndo)));
 
 await page.screenshot({ path: OUT + '/p3-05-final.png' });
