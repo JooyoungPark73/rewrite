@@ -12,6 +12,22 @@ paper against a human-owned `paper.json` semantic spec. See `PLAN.md` for the de
 
 ## Run
 
+The short way is the Makefile at the repo root:
+
+```bash
+make setup                   # uv sync, npm install, build the UI (once)
+make start REPO=~/paper      # backend on 127.0.0.1:8765 serving the built UI; opens the browser
+make stop                    # stop it (make status / make logs / make restart also exist)
+make dev REPO=~/paper        # development: backend --reload on :8000 + Vite on :5173
+make test                    # backend pytest + ruff, frontend typecheck + lint + build + e2e
+```
+
+`REPO` defaults to `$REWRITE_REPO`. With neither, `make start` shows a Finder folder picker on
+macOS (a folder without `.rewrite/` is initialised first); cancelling it, or any other platform,
+leaves the choice to the UI, whose "Open a paper repo" dialog has a **Browse…** folder browser
+(`GET /api/fs/dirs`). The pid and log of `make start` live under `.run/` in this repo
+(gitignored). By hand:
+
 ```bash
 # backend (serves the built frontend from frontend/dist when it exists)
 cd backend && uv sync && uv run rewrite serve --repo /path/to/paper [--port 8000]

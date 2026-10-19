@@ -6,6 +6,7 @@ from app.api import (
     config,
     files,
     findings,
+    fs,
     git,
     groups,
     repo,
@@ -18,6 +19,7 @@ from app.api import (
 
 routers = [
     repo.router,
+    fs.router,
     files.router,
     compile.router,
     config.router,

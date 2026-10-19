@@ -43,7 +43,7 @@
 // editor; "Reload from disk" replaces them with the file on disk, and only
 // when the user clicks it.
 import { useEffect, useRef, useState } from 'react'
-import { errorMessage, type Health, type ServerEvent, type ToolAvailability } from './api/client'
+import { errorMessage, listDirs, type DirListing, type Health, type ServerEvent, type ToolAvailability } from './api/client'
 import { useServerEvents, type SocketStatus } from './api/ws'
 import CompareDialog from './compare/CompareDialog'
 import ErrorList from './compile/ErrorList'
@@ -526,6 +526,10 @@ function SocketDot({ status }: { status: SocketStatus }) {
  * Modal asking for an absolute repo path. "Open" needs an initialized repo
  * (one with .rewrite/); "Init + Open" runs `rewrite init` first.
  * Backend errors (the `detail` string) are shown inline.
+ *
+ * "Browse…" shows a folder browser (GET /api/fs/dirs): Up / Home, click a folder
+ * to enter it, "Choose" puts its path into the field. Folders that already
+ * have .rewrite/ carry a "paper repo" badge, folders with .tex files a ".tex" badge.
  */
 function OpenRepoDialog({ canCancel, onClose }: { canCancel: boolean; onClose: () => void }) {
   const openRepo = useStore((s) => s.openRepo)
@@ -539,6 +543,46 @@ function OpenRepoDialog({ canCancel, onClose }: { canCancel: boolean; onClose: (
   })
   const [busy, setBusy] = useState<'open' | 'init' | null>(null)
   const [error, setError] = useState<string | null>(null)
+  // The folder browser: its current listing, whether it is shown, and a loading flag.
+  const [listing, setListing] = useState<DirListing | null>(null)
+  const [browsing, setBrowsing] = useState(false)
+  const [loadingDir, setLoadingDir] = useState(false)
+
+  /** Load `target` (undefined = home) into the browser and show it. */
+  const browse = async (target: string | undefined) => {
+    setLoadingDir(true)
+    setError(null)
+    try {
+      setListing(await listDirs(target))
+      setBrowsing(true)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setLoadingDir(false)
+    }
+  }
+  /** "Browse…": start at the typed path when it exists, else at home. */
+  const toggleBrowser = async () => {
+    if (browsing) {
+      setBrowsing(false)
+      return
+    }
+    const start = path.trim()
+    if (start) {
+      try {
+        setListing(await listDirs(start))
+        setBrowsing(true)
+        return
+      } catch {
+        // Not a directory (yet): fall back to home below.
+      }
+    }
+    await browse(undefined)
+  }
+  const choose = (dir: string) => {
+    setPath(dir)
+    setBrowsing(false)
+  }
 
   const run = async (kind: 'open' | 'init') => {
     const trimmed = path.trim()
@@ -582,6 +626,62 @@ function OpenRepoDialog({ canCancel, onClose }: { canCancel: boolean; onClose: (
             onChange={(e) => setPath(e.target.value)}
             aria-label="Repo path"
           />
+          <div className="mt-2 flex items-center gap-2">
+            <button type="button" className="btn btn-sm" onClick={() => void toggleBrowser()} disabled={loadingDir} data-testid="repo-browse">
+              {loadingDir && <span className="loading loading-xs loading-spinner" />}
+              {browsing ? 'Hide folders' : 'Browse…'}
+            </button>
+            <span className="text-xs text-base-content/60">or type the path above</span>
+          </div>
+          {browsing && listing && (
+            <div className="mt-2 rounded border border-base-300" data-testid="dir-browser">
+              <div className="flex items-center gap-1 border-b border-base-300 px-2 py-1">
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-xs"
+                  disabled={!listing.parent || loadingDir}
+                  onClick={() => listing.parent && void browse(listing.parent)}
+                  title="Parent folder"
+                  data-testid="dir-up"
+                >
+                  ↑ Up
+                </button>
+                <button type="button" className="btn btn-ghost btn-xs" disabled={loadingDir} onClick={() => void browse(listing.home)} data-testid="dir-home">
+                  Home
+                </button>
+                <span className="min-w-0 flex-1 truncate font-mono text-xs" title={listing.path} data-testid="dir-current">
+                  {listing.path}
+                </span>
+                <button type="button" className="btn btn-xs btn-primary" onClick={() => choose(listing.path)} data-testid="dir-choose">
+                  Choose this folder
+                </button>
+              </div>
+              <ul className="max-h-64 overflow-y-auto" data-testid="dir-list">
+                {listing.dirs.length === 0 && <li className="px-2 py-2 text-sm text-base-content/50">No sub-folders.</li>}
+                {listing.dirs.map((d) => (
+                  <li key={d.path} className="flex items-center hover:bg-base-200">
+                    <button
+                      type="button"
+                      className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-sm"
+                      onClick={() => void browse(d.path)}
+                      title={`Open ${d.path}`}
+                      data-testid="dir-entry"
+                      data-path={d.path}
+                      data-initialized={d.initialized ? 'true' : undefined}
+                    >
+                      <span className="truncate font-mono">{d.name}/</span>
+                      {d.initialized && <span className="badge badge-xs badge-success">paper repo</span>}
+                      {!d.initialized && d.has_tex && <span className="badge badge-xs badge-ghost">.tex</span>}
+                      {d.is_git && <span className="badge badge-xs badge-ghost">git</span>}
+                    </button>
+                    <button type="button" className="btn btn-ghost btn-xs mr-1" onClick={() => choose(d.path)} data-testid="dir-entry-choose" data-path={d.path}>
+                      Choose
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {error && (
             <div role="alert" className="mt-3 alert text-sm alert-soft alert-error" data-testid="open-repo-error">
               {error}

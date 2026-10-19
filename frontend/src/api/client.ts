@@ -1040,6 +1040,31 @@ export function initRepo(path: string): Promise<RepoInfo> {
   return sendJson<RepoInfo>('POST', '/api/repo/init', { path })
 }
 
+/** One folder in a GET /api/fs/dirs listing. */
+export interface DirEntry {
+  name: string
+  /** Absolute path. */
+  path: string
+  /** Has `.rewrite/`, so "Open" would accept it. */
+  initialized: boolean
+  /** Holds `.tex` files directly: probably a LaTeX project. */
+  has_tex: boolean
+  is_git: boolean
+}
+
+/** GET /api/fs/dirs: the sub-folders of `path` (home when omitted), for the Open dialog's browser. */
+export interface DirListing {
+  path: string
+  parent: string | null
+  home: string
+  dirs: DirEntry[]
+}
+
+export function listDirs(path?: string): Promise<DirListing> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ''
+  return getJson<DirListing>(`/api/fs/dirs${query}`)
+}
+
 /** GET /api/files: the main file plus every file reached via \input / \include. */
 export async function getFiles(): Promise<FileList> {
   const list = await getJson<FileList>('/api/files')

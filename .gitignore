@@ -12,3 +12,5 @@ frontend/playwright-report/
 # Example paper build output (created only if someone runs init on it)
 examples/*/.rewrite/build/
 examples/*/.rewrite/state.db*
+# make start/stop state (pid, log)
+.run/

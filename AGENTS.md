@@ -34,6 +34,10 @@ See "Build phases" in PLAN.md for the scope of each phase. Do not start phase N+
 
 ## Running
 
-- Backend: `cd backend && uv run uvicorn app.main:app --reload`
-- Frontend: `cd frontend && npm run dev`
-- Point the app at a paper repo: `rewrite init <repo>` then open it in the UI.
+- `make start [REPO=<paper repo>]` / `make stop` / `make status`: the built UI served by the
+  backend on 127.0.0.1:8765 (pid and log under `.run/`, gitignored). Without REPO, macOS gets a
+  Finder folder picker; the UI's Open dialog can also browse folders (`GET /api/fs/dirs`). `make dev REPO=...` runs
+  the backend with `--reload` on :8000 and Vite on :5173. `make test` runs every suite.
+- By hand — backend: `cd backend && uv run uvicorn app.main:app --reload`;
+  frontend: `cd frontend && npm run dev`.
+- Point the app at a paper repo: `make init REPO=<repo>` (or `rewrite init <repo>`) then open it in the UI.

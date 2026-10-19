@@ -130,3 +130,50 @@ test('narrow screens show the PDF only in the PDF tab', async ({ page }) => {
   await expect(page.getByTestId('pdf-viewer')).toBeVisible()
   await expect(page.getByTestId('editor')).toBeHidden()
 })
+
+test('Open dialog: Browse… walks folders (Up, Home, enter, Choose) and the chosen path opens', async ({ page, request }) => {
+  // The mock's fake tree: /Users/me/papers/my-paper; make that one an initialised repo.
+  await request.post(`${MOCK_URL}/__mock/repo`, { data: { path: '/Users/me/papers/my-paper' } })
+  await page.goto('/')
+  await page.getByTestId('repo-path').click()
+  await page.getByTestId('repo-browse').click()
+  const browser = page.getByTestId('dir-browser')
+  await expect(browser).toBeVisible()
+  // Starts at home (the typed path, if any, is not a directory in the mock).
+  await expect(browser.getByTestId('dir-current')).toHaveText('/Users/me')
+  await expect(browser.getByTestId('dir-entry')).toHaveCount(2)
+  // Up to /Users, Home back again.
+  await browser.getByTestId('dir-up').click()
+  await expect(browser.getByTestId('dir-current')).toHaveText('/Users')
+  await browser.getByTestId('dir-home').click()
+  await expect(browser.getByTestId('dir-current')).toHaveText('/Users/me')
+  // Enter papers: my-paper carries the "paper repo" badge, draft only ".tex".
+  await browser.locator('[data-testid="dir-entry"][data-path="/Users/me/papers"]').click()
+  await expect(browser.getByTestId('dir-current')).toHaveText('/Users/me/papers')
+  const paper = browser.locator('[data-testid="dir-entry"][data-path="/Users/me/papers/my-paper"]')
+  await expect(paper).toHaveAttribute('data-initialized', 'true')
+  await expect(paper).toContainText('paper repo')
+  await expect(browser.locator('[data-testid="dir-entry"][data-path="/Users/me/papers/draft"]')).toContainText('.tex')
+  // Enter my-paper and choose it: the path field is filled and the browser closes.
+  await paper.click()
+  await expect(browser.getByTestId('dir-current')).toHaveText('/Users/me/papers/my-paper')
+  await browser.getByTestId('dir-choose').click()
+  await expect(browser).toHaveCount(0)
+  await expect(page.getByLabel('Repo path')).toHaveValue('/Users/me/papers/my-paper')
+  await page.getByRole('button', { name: 'Open', exact: true }).click()
+  await expect(page.getByTestId('repo-path')).toHaveText('/Users/me/papers/my-paper')
+})
+
+test('Open dialog: the per-row Choose button fills the path without entering the folder', async ({ page }) => {
+  await page.goto('/')
+  await page.getByTestId('repo-path').click()
+  await page.getByTestId('repo-browse').click()
+  const browser = page.getByTestId('dir-browser')
+  await browser.locator('[data-testid="dir-entry-choose"][data-path="/Users/me/papers"]').click()
+  await expect(browser).toHaveCount(0)
+  await expect(page.getByLabel('Repo path')).toHaveValue('/Users/me/papers')
+  // A missing endpoint answer shows up inline rather than breaking the dialog.
+  await page.getByLabel('Repo path').fill('/nowhere/at/all')
+  await page.getByTestId('repo-browse').click()
+  await expect(page.getByTestId('dir-browser').getByTestId('dir-current')).toHaveText('/Users/me')
+})

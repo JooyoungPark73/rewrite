@@ -176,6 +176,19 @@ function switchRepo(path) {
 }
 
 let state
+// The folder tree GET /api/fs/dirs answers with (names only; see the route).
+const FAKE_HOME = '/Users/me'
+const FAKE_TREE = {
+  '/': ['Users'],
+  '/Users': ['me'],
+  '/Users/me': ['Documents', 'papers'],
+  '/Users/me/Documents': [],
+  '/Users/me/papers': ['draft', 'my-paper'],
+  '/Users/me/papers/draft': [],
+  '/Users/me/papers/my-paper': ['sections'],
+  '/Users/me/papers/my-paper/sections': [],
+}
+
 function reset() {
   state = {
     repo: process.env.MOCK_START_EMPTY === '1' ? null : MOCK_REPO,
@@ -482,6 +495,21 @@ async function handle(req, res) {
       tools: { latexmk: true, docker: state.dockerAvailable, claude: true, codex: false, git: true },
       repo: state.repo,
     })
+  }
+
+  // GET /api/fs/dirs: a small fake folder tree for the Open dialog's browser. Folders that
+  // were "initialised" (state.initialized, incl. the open repo) report initialized: true.
+  if (route === 'GET /api/fs/dirs') {
+    const raw = (url.searchParams.get('path') ?? '').trim() || FAKE_HOME
+    if (!raw.startsWith('/')) return sendJson(res, 400, { detail: `path must be absolute: ${raw}` })
+    const path = raw.length > 1 ? raw.replace(/\/+$/, '') : raw
+    const names = FAKE_TREE[path]
+    if (!names) return sendJson(res, 404, { detail: `no such directory: ${raw}` })
+    const dirs = names.map((name) => {
+      const full = path === '/' ? `/${name}` : `${path}/${name}`
+      return { name, path: full, initialized: state.initialized.has(full), has_tex: /paper|draft/.test(name), is_git: /paper/.test(name) }
+    })
+    return sendJson(res, 200, { path, parent: path === '/' ? null : path.slice(0, path.lastIndexOf('/')) || '/', home: FAKE_HOME, dirs })
   }
 
   if (route === 'POST /api/repo/open' || route === 'POST /api/repo/init') {
