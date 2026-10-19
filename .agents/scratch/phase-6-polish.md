@@ -522,3 +522,20 @@ the config.toml template).
   server environment (only fake CLIs check the stripped environment). `claude auth status`
   is not given `--setting-sources`, so an `env` block in ~/.claude/settings.json could make it
   report a login a run (which loads no settings) would not use.
+
+### macOS acceptance 2026-10-19
+
+| Check | Result | How |
+| --- | --- | --- |
+| 1 "Run both" → merged list with agreement badges | pass | p6 live, first run 33/33 (+1 data-dependent skip): claude + codex members done, agreements_count matched the merged list, badges and runner chips in API order, agreement entry first and unfolded. Second run 32/32 (+2 skips: the runners agreed on nothing, triage flagged nothing) |
+| 2 triage marks trivial findings, the filter hides them | pass / data-dependent | triage ran as a fresh `triage` run, verdicts on every open finding, counts and badges match the API, "hide wrong/trivial" works; both runs the model returned only `keep`, so "Dismiss all flagged" was skipped |
+| 3 fan-out on a 5-section paper launches ≤ 3 processes | pass | 4 section runs + 1 message-drift over `ends`; max 3 at once by API status; `claude -p` processes seen: 3 |
+
+- Script fix: p6 counted processes with `pgrep -fc`; BSD pgrep has no `-c`, so macOS reported 0
+  (the real check uses the API and was unaffected). Now counts the lines of `pgrep -f`;
+  guarded by `e2e/portability.spec.ts`.
+- Headless suite fix: `groups.spec.ts` read the merged entries' agreement once right after the
+  status badge (which follows the `group.updated` event) while the detail refetch was still in
+  flight (150 ms debounce); on macOS that raced every time. It now polls. Not an app defect: the
+  merged view refreshes within the debounce.
+- Keychain logins of the real CLIs verified (see phase 4). Tauri wrap still not built.

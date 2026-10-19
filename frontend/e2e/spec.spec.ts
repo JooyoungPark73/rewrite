@@ -470,14 +470,14 @@ test('Ctrl-Z undoes the last spec change by PUTting the previous spec; Ctrl-Shif
   await expect.poll(async () => (await ops(request, 'update')).length).toBe(1)
 
   // Undo while the input still has focus: the spec, not the input's text, is undone.
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(saysInput(page, 'intro-1')).toHaveValue('old promise')
   const undo = (await specLog(request)).at(-1)!
   expect(undo).toMatchObject({ method: 'PUT', path: '/api/spec' })
   expect((undo.body.spec as ReturnType<typeof paperSpec>).tree.children[0].says).toBe('old promise')
   expect((await getSpecFile(request)).spec.tree.children[0].says).toBe('old promise')
 
-  await page.keyboard.press('Control+Shift+z')
+  await page.keyboard.press('ControlOrMeta+Shift+z')
   await expect(saysInput(page, 'intro-1')).toHaveValue('new promise')
   expect((await getSpecFile(request)).spec.tree.children[0].says).toBe('new promise')
 
@@ -486,9 +486,9 @@ test('Ctrl-Z undoes the last spec change by PUTting the previous spec; Ctrl-Shif
   await saysInput(page, 'intro-1').press('Enter')
   await expect(row(page, 'section-1')).toBeVisible()
   await page.keyboard.type('typed then undone')
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(saysInput(page, 'section-1')).toHaveValue('')
-  await page.keyboard.press('Control+z')
+  await page.keyboard.press('ControlOrMeta+z')
   await expect(row(page, 'section-1')).toHaveCount(0)
   await expect(page.getByTestId('spec-redo')).toBeEnabled()
 })
@@ -594,7 +594,7 @@ test('Raw JSON: an invalid document shows the 422 errors and writes nothing; a v
   const before = (await getSpecFile(request)).raw
 
   await raw.locator('.cm-content').click()
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.insertText('{"version": 2, "message": {"id": "message", "level": "paragraph", "says": ""}}')
   await expect(raw.getByTestId('raw-dirty')).toBeVisible()
   await raw.getByTestId('raw-save').click()
@@ -608,7 +608,7 @@ test('Raw JSON: an invalid document shows the 422 errors and writes nothing; a v
   // A valid edit saves; the editor then shows the canonical text and the outliner follows.
   const fixed = paperSpec([node('intro-1', 'section', 'Intro, edited by hand')])
   await raw.locator('.cm-content').click()
-  await page.keyboard.press('Control+a')
+  await page.keyboard.press('ControlOrMeta+a')
   await page.keyboard.insertText(JSON.stringify(fixed))
   await raw.getByTestId('raw-save').click()
   await expect(errors).toHaveCount(0)

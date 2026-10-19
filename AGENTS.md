@@ -6,8 +6,12 @@ believe a decision is wrong, say so and stop rather than silently deviating.
 
 ## Current phase
 
-All six phases are implemented and Linux-verified (2026-10-18); macOS acceptance,
-PLAN.md's definition of done, is still pending for every phase. The optional Tauri
+All six phases are implemented, Linux-verified (2026-10-18) and run through their macOS
+acceptance (2026-10-19). Phases 1, 2, 3 and 5 are macOS-verified (PLAN.md's definition of
+done). Phase 4 and phase 6 each have two checks verified only in part (clipboard copy,
+rewrite rejection from a live pass, triage flagging nothing trivial) and phase 5's git panel
+was exercised against a local bare remote, not a real GitHub remote; see the
+`### macOS acceptance 2026-10-19` tables in `.agents/scratch/phase-N-*.md`. The optional Tauri
 wrap is documented in `docs/tauri.md` but not built. Briefs and per-phase status live in `.agents/scratch/`.
 See "Build phases" in PLAN.md for the scope of each phase. Do not start phase N+1 work while phase N's manual checks are open.
 

@@ -115,10 +115,10 @@ check('main.tex is open in the editor', await openName.filter({ hasText: /^main\
 // ---- Manual check 4: edit + Ctrl-S ----------------------------------------
 if (!check(`opened ${EDIT_FILE}`, await openInTree(EDIT_FILE))) await finish();
 await editor.click();
-await page.keyboard.press('Control+End');
+await page.keyboard.press('ControlOrMeta+End');
 await page.keyboard.type(`\n${MARK}\n`);
 check('dirty marker shows after typing', await page.getByTestId('dirty-marker').waitFor({ timeout: 3000 }).then(() => true, () => false));
-await page.keyboard.press('Control+s');
+await page.keyboard.press('ControlOrMeta+s');
 check('Ctrl-S wrote the edit to disk', !!(await waitFor(() => readFile(EDIT_FILE).includes(MARK), 5000)));
 check('dirty marker cleared after the save', await page.getByTestId('dirty-marker').waitFor({ state: 'detached', timeout: 5000 }).then(() => true, () => false));
 
@@ -138,11 +138,11 @@ await page.screenshot({ path: OUT + '/p1-after-compile.png' });
 // ---- Manual check 6: error list + click to the line -------------------------
 if (!check(`opened ${ERROR_FILE}`, await openInTree(ERROR_FILE))) await finish();
 await editor.click();
-await page.keyboard.press('Control+Home');
+await page.keyboard.press('ControlOrMeta+Home');
 for (let i = 1; i < ERROR_LINE; i++) await page.keyboard.press('ArrowDown');
 await page.keyboard.press('Home');
 await page.keyboard.type('\\undefinedmacro\n');
-await page.keyboard.press('Control+s');
+await page.keyboard.press('ControlOrMeta+s');
 check('the \\undefinedmacro line was saved', !!(await waitFor(() => readFile(ERROR_FILE).split('\n')[ERROR_LINE - 1] === '\\undefinedmacro', 5000)));
 await page.getByRole('button', { name: 'Compile' }).click();
 const errorRow = page.getByTestId('error-row').filter({ hasText: 'Undefined control sequence' }).filter({ hasText: `${ERROR_FILE}:${ERROR_LINE}` });

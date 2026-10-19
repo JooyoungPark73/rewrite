@@ -103,3 +103,18 @@ TeX Live year.
 - Manual checks 1–3 verified headlessly on Linux; check 4 by unit tests. Not verified: macOS.
 - Judgment calls: `--pull=never` on compile (pull is explicit), named containers killed on timeout,
   boxes stay until the next sync, no auto-sync while the file is dirty.
+
+### macOS acceptance 2026-10-19
+
+| Check | Result | How |
+| --- | --- | --- |
+| 1 cursor line → PDF box | pass | p2 live: intro.tex:16 → one box on page 1 (y = 498 pt), scrolled into view |
+| 2 double-click in the PDF → right file and line | pass | p2 (reverse at the box centre → intro.tex:16) and a headed-Chromium double-click (intro.tex:14 → landed on 13, within ±1) |
+| 3 docker / TL2024: pull, compile, both sync directions | pass | `PUT /api/config {docker, 2024}`; `POST /api/compile/docker/pull` pulled `texlive/texlive:TL2024-historic` (not present before); compile on an emptied build dir: log says TeX Live 2024, 2.2 s; every build file owned by uid 501 / gid 20 (mine); forward and reverse give the same box / line as the native build; p2 live 9/9 against the Docker build |
+| 4 `/private/var` + symlink normalisation | pass | unit tests (`test_synctex.py` + `test_logparse.py`: 68 passed) and a real run: sample paper copied under `$TMPDIR` (`/var/folders/...`), served with the unresolved path; `.synctex.gz` records `/private/var/...`; forward returns a box and reverse at its centre returns `sections/intro.tex:16` |
+
+- Docker-gated backend tests: `REWRITE_TEST_DOCKER=1 uv run pytest tests/test_docker.py` → 19 passed.
+- Note for the next person: `run-all.sh` always inits a fresh repo (native compiler), so the Docker
+  rerun of p2 was done by hand: server on 8765 for the TMPDIR repo with the docker config, then
+  `node e2e/live/p2-e2e.mjs <repo> ~/rewrite-live`. p2/p3/p4 hard-code port 8765 (p1/p5/p6 honour
+  `REWRITE_URL`); left as is.
