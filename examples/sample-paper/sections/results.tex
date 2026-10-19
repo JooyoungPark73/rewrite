@@ -1,0 +1,31 @@
+\section{Evaluation}
+\label{sec:results}
+
+We replay a 24-hour trace of 1{,}200 functions sampled from a public production
+dataset~\cite{shahrad2020serverless} on a 32-core host. We compare
+\textsc{Prefetch} with on-demand snapshot restore and with a warm pool whose
+keep-alive window is tuned to match \textsc{Prefetch}'s 99th-percentile latency.
+
+Table~\ref{tab:latency} reports cold-start latency. \textsc{Prefetch} reduces
+median latency from 412\,ms to 133\,ms relative to on-demand restore, because
+the working set (Equation~\ref{eq:working-set}) covers most of the pages each
+invocation touches.
+
+\begin{table}[t]
+  \centering
+  \caption{Cold-start latency in milliseconds.}
+  \label{tab:latency}
+  \begin{tabular}{lrrr}
+    \toprule
+    System & p50 & p99 & Memory (GB) \\
+    \midrule
+    On-demand restore & 412 & 1630 & 18 \\
+    Warm pool         &  21 &  480 & 96 \\
+    \textsc{Prefetch} & 133 &  478 & 36 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The warm pool achieves lower median latency, since most of its requests hit a
+warm instance, but it holds 96\,GB of memory against 36\,GB for
+\textsc{Prefetch} at the same tail latency.

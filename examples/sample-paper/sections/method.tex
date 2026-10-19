@@ -1,0 +1,38 @@
+\section{Design}
+\label{sec:method}
+
+\textsc{Prefetch} records, for every function, the working set of pages that the
+function accessed during its most recent invocations. On a cold start it restores
+the snapshot and loads the recorded working set in one sequential read before the
+function resumes, instead of serving each page on demand.
+
+\paragraph{Recording.} During an invocation, the hypervisor tracks first-touch
+page faults. The recorded working set $W_f$ of function $f$ is the union of the
+pages touched in the last $k$ invocations:
+\begin{equation}
+  W_f = \bigcup_{i=n-k+1}^{n} P_f^{(i)},
+  \label{eq:working-set}
+\end{equation}
+where $P_f^{(i)}$ is the set of pages touched in invocation $i$. We use $k=3$.
+
+\paragraph{Prefetching.} At restore time, \textsc{Prefetch} reads the pages of
+$W_f$ from the snapshot file in offset order and installs them before the vCPU
+starts. Pages outside $W_f$ are still served lazily, so a mispredicted working
+set costs latency but never correctness.
+
+Figure~\ref{fig:pipeline} summarizes the restore path.
+
+\begin{figure}[t]
+  \centering
+  \setlength{\unitlength}{1mm}
+  \begin{picture}(120,22)
+    \put(0,6){\framebox(30,10){snapshot}}
+    \put(30,11){\vector(1,0){12}}
+    \put(42,6){\framebox(32,10){read $W_f$}}
+    \put(74,11){\vector(1,0){12}}
+    \put(86,6){\framebox(32,10){resume vCPU}}
+  \end{picture}
+  \caption{Restore path in \textsc{Prefetch}: the recorded working set is read
+    sequentially before the function resumes.}
+  \label{fig:pipeline}
+\end{figure}

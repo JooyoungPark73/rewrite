@@ -1,0 +1,2 @@
+This is SyncTeX command line utility, version 1.5
+SyncTeX Warning: No tag for intro.tex

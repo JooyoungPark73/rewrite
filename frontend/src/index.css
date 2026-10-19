@@ -1,0 +1,88 @@
+/*
+ * Global styles: Tailwind v4 + DaisyUI 5, plus the few CodeMirror rules that
+ * cannot be expressed as utility classes on our own elements.
+ *
+ * Only the light theme is enabled for now: CodeMirror's default highlight
+ * style assumes a light background. Dark mode is a later polish item.
+ */
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes: light --default;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Make CodeMirror fill its container and scroll internally. */
+.cm-editor {
+  height: 100%;
+  font-size: 13px;
+}
+.cm-editor.cm-focused {
+  outline: none;
+}
+.cm-scroller {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.5;
+}
+
+/* Brief highlight applied to a line after "go to line" (error click, sync). */
+.cm-flash-line {
+  animation: cm-flash 1.4s ease-out;
+}
+@keyframes cm-flash {
+  from {
+    background-color: rgb(250 204 21 / 0.55);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+/* SyncTeX highlight box on the PDF (pdf/SyncBoxes.tsx): a short pulse when it
+   appears, then it stays semi-transparent until the next sync. */
+.sync-box {
+  animation: sync-box-in 0.8s ease-out;
+}
+@keyframes sync-box-in {
+  from {
+    background-color: rgb(250 204 21 / 0.85);
+  }
+}
+
+/* Review findings (phase 4, editor/Editor.tsx). Every finding listed in the
+   sidebar tints its lines faintly by severity; the selected one gets a
+   stronger tint and a bar in the left margin, and its quote is underlined.
+   The `.cm-editor .cm-line` prefix wins over the active-line background. */
+.cm-editor .cm-line.cm-finding-minor {
+  background-color: rgb(14 165 233 / 0.07);
+}
+.cm-editor .cm-line.cm-finding-major {
+  background-color: rgb(245 158 11 / 0.1);
+}
+.cm-editor .cm-line.cm-finding-critical {
+  background-color: rgb(239 68 68 / 0.1);
+}
+.cm-editor .cm-line.cm-finding-active {
+  background-color: rgb(250 204 21 / 0.28);
+  box-shadow: inset 3px 0 0 rgb(202 138 4);
+}
+.cm-editor .cm-line.cm-finding-active-critical {
+  background-color: rgb(239 68 68 / 0.22);
+  box-shadow: inset 3px 0 0 rgb(220 38 38);
+}
+.cm-editor .cm-line.cm-finding-active-major {
+  background-color: rgb(245 158 11 / 0.25);
+  box-shadow: inset 3px 0 0 rgb(217 119 6);
+}
+.cm-editor .cm-line.cm-finding-active-minor {
+  background-color: rgb(14 165 233 / 0.18);
+  box-shadow: inset 3px 0 0 rgb(2 132 199);
+}
+.cm-finding-quote {
+  text-decoration: underline wavy rgb(202 138 4 / 0.8);
+  text-underline-offset: 3px;
+}

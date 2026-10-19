@@ -1,0 +1,54 @@
+[project]
+name = "rewrite"
+version = "0.1.0"
+description = "rewrite: a local LaTeX editor plus a spec-driven LLM flaw-finder (backend)."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.143.5",
+    "jinja2>=3.1.6",
+    "pydantic>=2.14.1",
+    "pydantic-settings>=2.16.0",
+    "python-multipart>=0.0.32",
+    "pyyaml>=6.0.3",
+    "tomli-w>=1.2.0",
+    "uvicorn[standard]>=0.54.0",
+    "watchfiles>=1.3.0",
+]
+
+[project.scripts]
+rewrite = "app.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# An installed wheel has no app-repo checkout next to it, so the default prompt set
+# is bundled into the package as app/default_prompts/. From a source checkout
+# (including the editable install `uv sync` makes) app/repo.py reads ../prompts directly.
+[tool.hatch.build.targets.wheel.force-include]
+"../prompts" = "app/default_prompts"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "httpx2>=2.13.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.17.1",
+]

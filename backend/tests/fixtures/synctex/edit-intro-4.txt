@@ -1,0 +1,9 @@
+This is SyncTeX command line utility, version 1.5
+SyncTeX result begin
+Output:.rewrite/build/main.pdf
+Input:/home/ada/paper/./sections/intro.tex
+Line:4
+Column:-1
+Offset:0
+Context:
+SyncTeX result end

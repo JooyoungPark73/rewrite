@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a14f45-b898-77a0-8cdb-36db445704bf"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"{\"findings\":[{\"word\":\"red\",\"json_ref\":null},{\"word\":\"blue\",\"json_ref\":null}]}"}}
+{"type":"turn.completed","usage":{"input_tokens":14364,"cached_input_tokens":0,"cache_write_input_tokens":0,"output_tokens":34,"reasoning_output_tokens":0}}

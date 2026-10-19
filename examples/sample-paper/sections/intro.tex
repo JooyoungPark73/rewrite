@@ -1,0 +1,25 @@
+\section{Introduction}
+\label{sec:intro}
+
+Function-as-a-Service (FaaS) platforms bill tenants per invocation and scale
+each function down to zero instances when it is idle~\cite{jonas2019cloud}.
+The price of scaling to zero is the cold start: the first request after an idle
+period waits while the platform boots a sandbox, loads a language runtime and
+initializes the function's code. Production traces show that cold starts are
+frequent, because most functions are invoked rarely~\cite{shahrad2020serverless}.
+
+Providers mitigate cold starts with warm pools that keep recently used instances
+alive for a fixed keep-alive window. Warm pools trade memory for latency, and the
+trade is poor for the long tail of rarely invoked functions: an instance that is
+kept warm for ten minutes and then evicted unused costs memory and saves nothing.
+
+Snapshot restore is the main alternative. The platform checkpoints an initialized
+instance once and restores it from the snapshot on every cold start, which skips
+runtime and application initialization~\cite{ustiugov2021benchmarking}. Restore
+is not free, however: the restored instance faults in its memory one page at a
+time, and these page faults dominate restore latency.
+
+This paper makes two observations. First, the set of pages a function touches is
+stable across invocations. Second, that set is small relative to the snapshot.
+We build on both in \textsc{Prefetch} (Section~\ref{sec:method}) and evaluate it
+in Section~\ref{sec:results}.
