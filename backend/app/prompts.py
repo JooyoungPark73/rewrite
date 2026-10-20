@@ -54,7 +54,7 @@ from app.files import (
 )
 from app.findings import findings_schema_text
 from app.repo import Repo, default_prompts_dir, sandbox_text
-from app.spec import LEVEL_FIELDS, Node, PaperSpec, find_tree_node, load_spec
+from app.spec import LEVEL_FIELDS, Node, PaperSpec, find_tree_node, load_spec, paragraph_marker_id
 
 log = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ ScopeKind = Literal["paper", "section", "file", "selection", "ends"]
 SCOPE_KINDS: tuple[str, ...] = ("paper", "section", "file", "selection", "ends")
 PassLevel = Literal["message", "claim", "section", "paragraph", "sentence"]
 PASS_LEVELS: tuple[str, ...] = ("message", "claim", "section", "paragraph", "sentence")
-PassKind = Literal["review", "triage", "compare"]
+PassKind = Literal["review", "triage", "compare", "draft"]
 PASS_KINDS: tuple[str, ...] = ("review", "triage", "compare")
 # Every pass may use these. `fanout` is true only for the members of a per-section fan-out
 # (phase 6); a pass that does not use it gets FANOUT_NOTE in front of its body instead.
@@ -76,10 +76,32 @@ COMPARE_PASS = "ab-compare"
 # The triage call (phase 6) also supplies `findings`: the triaged run's open findings.
 TRIAGE_VARS = frozenset({"findings"})
 TRIAGE_PASS = "triage"
+DRAFT_VARS = frozenset(
+    {
+        "node_id",
+        "says",
+        "function",
+        "section_id",
+        "section_says",
+        "claims_text",
+        "section_source",
+        "current_text",
+        "labels",
+        "bib_keys",
+        "draft_schema",
+        # rewrite.md (phase 8, Revise)
+        "comment",
+        "comment_why",
+        "original",
+        "span_kind",
+        "paragraph_source",
+    }
+)
 KIND_VARS: dict[str, frozenset[str]] = {
     "review": TEMPLATE_VARS,
     "triage": TEMPLATE_VARS | TRIAGE_VARS,
     "compare": TEMPLATE_VARS | COMPARE_VARS,
+    "draft": TEMPLATE_VARS | DRAFT_VARS,
 }
 FANOUT_NOTE = (
     "Note: this request is one part of a per-section review of a longer paper. The spec "
@@ -1080,4 +1102,275 @@ def assemble_triage_prompt(
         scope_hash=sha256(resolved.source),
         spec_hash=sha256(spec_text),
         variant="triage",
+    )
+
+
+# --------------------------------------------------------------------------- drafting (phase 7)
+
+DRAFTS_DIR = "drafts"
+DRAFT_LEVELS: tuple[str, ...] = ("paragraph", "rewrite")  # template names in prompts/drafts/
+
+
+def _drafts_dir(repo: Repo) -> Path:
+    """`.rewrite/prompts/drafts/`, or the app's default set when the repo predates it."""
+    local = repo.prompts_dir / DRAFTS_DIR
+    if (local / "system.md").is_file():
+        return local
+    return default_prompts_dir() / DRAFTS_DIR
+
+
+def load_draft_system(repo: Repo) -> str:
+    path = _drafts_dir(repo) / "system.md"
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise PromptError(f"cannot read the drafting system prompt {path}: {exc}") from exc
+
+
+def get_draft_template(repo: Repo, level: str) -> PassDef:
+    """The drafting template for `level` (prompts/drafts/<level>.md), parsed like a pass;
+    its front matter must say `kind: draft`."""
+    if level not in DRAFT_LEVELS:
+        raise PromptError(
+            f"no drafting template for level {level!r} (have: {', '.join(DRAFT_LEVELS)})"
+        )
+    path = _drafts_dir(repo) / f"{level}.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise PromptError(f"cannot read the drafting template {path}: {exc}") from exc
+    rel = path.relative_to(repo.root).as_posix() if path.is_relative_to(repo.root) else str(path)
+    pass_def = parse_pass(text, rel, f"draft-{level}")
+    if pass_def.info.error:
+        raise PromptError(f"drafting template {rel}: {pass_def.info.error}")
+    if pass_def.info.kind != "draft":
+        raise PromptError(f"drafting template {rel} must have front matter `kind: draft`")
+    return pass_def
+
+
+_BIB_KEY_RE = re.compile(
+    r"^\s*@(?!comment|preamble|string)[A-Za-z]+\s*\{\s*([^,\s]+)\s*,", re.M | re.I
+)
+
+
+def bib_keys(repo: Repo) -> list[str]:
+    """Citation keys of the .bib files the main file pulls in, in document order."""
+    try:
+        tree = resolve_tex_tree(repo.root, repo.main)
+    except ConfigError:
+        return []
+    keys: list[str] = []
+    for entry in tree.files:
+        if entry.kind != "bib":
+            continue
+        try:
+            text, _ = read_text_file(repo.root, entry.path)
+        except Exception:
+            continue
+        for m in _BIB_KEY_RE.finditer(text):
+            if m.group(1) not in keys:
+                keys.append(m.group(1))
+    return keys
+
+
+def _claims_text(spec: PaperSpec, node: Node) -> str:
+    lines = []
+    for claim_id in node.claims:
+        claim = next((c for c in spec.claims if c.id == claim_id), None)
+        if claim is None:
+            continue
+        lines.append(f"  - `{claim.id}`: {_one_line(claim.says)}")
+        for key in ("evidence", "scope"):
+            value = claim.fields.get(key, "")
+            if value:
+                lines.append(f"      {key}: {_one_line(value)}")
+    return "\n".join(lines)
+
+
+def _section_source_text(repo: Repo, spec: PaperSpec, section: Node) -> str:
+    """The section's LaTeX as it reads now, unnumbered, author block stripped; "" when the
+    section is not anchored or cannot be resolved."""
+    if section.anchor is None:
+        return ""
+    try:
+        resolved = resolve_scope(repo, spec, Scope(kind="section", ref=section.id))
+    except PromptError:
+        return ""
+    out: list[str] = []
+    for line in resolved.source.split("\n"):
+        if line.startswith("=== file:"):
+            out.append(line)
+            continue
+        # Strip the "   12 | " numbering prefix added by number_lines.
+        m = re.match(r"^\s*\d+ \| ?(.*)$", line)
+        out.append(m.group(1) if m else line)
+    return "\n".join(out).strip("\n")
+
+
+def _current_text(repo: Repo, node: Node) -> str:
+    if node.anchor is None:
+        return ""
+    marker_id = paragraph_marker_id(node)
+    if marker_id is None:
+        return ""
+    try:
+        scan = skeleton.scan_document(repo.root, repo.main)
+    except ConfigError:
+        return ""
+    marker = skeleton.find_marker(scan, marker_id, node.anchor.file)
+    if marker is None:
+        return ""
+    lines = scan.lines.get(marker.file, [])
+    span = skeleton.marker_paragraph(lines, marker_id)
+    if span is None:
+        return ""
+    _, first, last = span
+    return "\n".join(lines[first - 1 : last]).strip("\n")
+
+
+def assemble_draft_prompt(repo: Repo, node_id: str, answer_schema: str) -> AssembledPrompt:
+    """The prompt for one draft of paragraph `node_id` (phase 7): the drafting system prompt
+    (plus the paper's writing style), then prompts/drafts/paragraph.md rendered with the
+    full outline, the target's says / function / linked claims, the section's current LaTeX,
+    the paragraph's current text, the paper's labels and bib keys, and the answer schema.
+    `source` of the resolved scope is the section's LaTeX (for the run row); never cached."""
+    spec, spec_text = load_spec_for_prompt(repo)
+    found = find_tree_node(spec, node_id)
+    if found is None:
+        raise PromptError(f"unknown node {node_id!r}")
+    node, parent = found
+    if node.level != "paragraph":
+        raise PromptError(f"{node_id} is a {node.level}; drafts target paragraphs")
+    template = get_draft_template(repo, "paragraph")
+    system_text = load_draft_system(repo)
+    style = get_style(repo, repo.load_config().paper.style) if template.info.style else None
+    section = style_section(style)
+    if section:
+        system_text = join_prompt([system_text, section]).rstrip("\n")
+    scan = skeleton.scan_document(repo.root, repo.main)
+    labels = ", ".join(f"`{i.label}`" for i in skeleton.scan_labels(scan))
+    keys = ", ".join(f"`{k}`" for k in bib_keys(repo))
+    section_source = _section_source_text(repo, spec, parent)
+    variables = {
+        "spec_outline": render_outline(spec),
+        "spec_json": spec_text.rstrip("\n"),
+        "source": section_source,
+        "scope_name": f"paragraph {node_id}",
+        "claims": render_claims(spec),
+        "findings_schema": answer_schema,
+        "fanout": False,
+        "node_id": node.id,
+        "says": node.says,
+        "function": node.fields.get("function", ""),
+        "section_id": parent.id,
+        "section_says": parent.says,
+        "claims_text": _claims_text(spec, node),
+        "section_source": section_source,
+        "current_text": _current_text(repo, node),
+        "labels": labels,
+        "bib_keys": keys,
+        "draft_schema": answer_schema,
+    }
+    body = render_pass(template, variables)
+    scope = Scope(
+        kind="selection",
+        file=node.anchor.file if node.anchor else None,
+        line_start=None,
+        line_end=None,
+    )
+    resolved = ResolvedScope(
+        scope=scope, name=f"paragraph {node_id}", source=section_source, files={}
+    )
+    return AssembledPrompt(
+        pass_def=template,
+        resolved=resolved,
+        prompt=join_prompt([system_text, body]),
+        system_text=system_text,
+        spec_text=spec_text,
+        prompt_hash=sha256(template.text, system_text),
+        scope_hash=sha256(section_source),
+        spec_hash=sha256(spec_text),
+        variant="draft",
+    )
+
+
+def assemble_rewrite_prompt(
+    repo: Repo,
+    *,
+    comment: str,
+    comment_why: str,
+    original: str,
+    span_kind: str,
+    file: str,
+    line: int,
+    node_id: str | None,
+    answer_format: str,
+) -> AssembledPrompt:
+    """The prompt for one rewrite (phase 8, Revise): the drafting system prompt (plus the
+    writing style), then prompts/drafts/rewrite.md with the comment, the span as it reads
+    now, the paragraph and section around it, the paragraph's spec entry when `node_id`
+    names one, the labels and bib keys, and the answer format. Never cached."""
+    spec, spec_text = load_spec_for_prompt(repo)
+    template = get_draft_template(repo, "rewrite")
+    system_text = load_draft_system(repo)
+    style = get_style(repo, repo.load_config().paper.style) if template.info.style else None
+    section = style_section(style)
+    if section:
+        system_text = join_prompt([system_text, section]).rstrip("\n")
+    scan = skeleton.scan_document(repo.root, repo.main)
+    node = parent = None
+    found = find_tree_node(spec, node_id) if node_id else None
+    if found is not None and found[0].level == "paragraph":
+        node, parent = found
+    paragraph = scan.paragraph_at(file, line)
+    if paragraph is not None:
+        lines = scan.lines.get(file, [])
+        paragraph_source = "\n".join(lines[paragraph.line_start - 1 : paragraph.line_end]).strip(
+            "\n"
+        )
+    else:
+        paragraph_source = original
+    labels = ", ".join(f"`{i.label}`" for i in skeleton.scan_labels(scan))
+    keys = ", ".join(f"`{k}`" for k in bib_keys(repo))
+    section_source = _section_source_text(repo, spec, parent) if parent is not None else ""
+    variables = {
+        "spec_outline": render_outline(spec),
+        "spec_json": spec_text.rstrip("\n"),
+        "source": paragraph_source,
+        "scope_name": f"rewrite in {file}:{line}",
+        "claims": render_claims(spec),
+        "findings_schema": answer_format,
+        "fanout": False,
+        "node_id": node.id if node else "",
+        "says": node.says if node else "",
+        "function": node.fields.get("function", "") if node else "",
+        "section_id": parent.id if parent else "",
+        "section_says": parent.says if parent else "",
+        "claims_text": _claims_text(spec, node) if node else "",
+        "section_source": section_source,
+        "current_text": paragraph_source,
+        "labels": labels,
+        "bib_keys": keys,
+        "draft_schema": answer_format,
+        "comment": comment,
+        "comment_why": comment_why,
+        "original": original,
+        "span_kind": span_kind,
+        "paragraph_source": paragraph_source,
+    }
+    body = render_pass(template, variables)
+    scope = Scope(kind="selection", file=file, line_start=line, line_end=line)
+    resolved = ResolvedScope(
+        scope=scope, name=f"rewrite in {file}:{line}", source=original, files={}
+    )
+    return AssembledPrompt(
+        pass_def=template,
+        resolved=resolved,
+        prompt=join_prompt([system_text, body]),
+        system_text=system_text,
+        spec_text=spec_text,
+        prompt_hash=sha256(template.text, system_text),
+        scope_hash=sha256(original),
+        spec_hash=sha256(spec_text),
+        variant="rewrite",
     )

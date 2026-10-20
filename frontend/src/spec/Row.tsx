@@ -27,6 +27,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, useLay
 import type { Node as SpecNode, NodeStatus } from '../api/client'
 import { LEVEL_FIELDS } from '../api/client'
 import { useCompareStore } from '../state/compare'
+import { useDraftStore } from '../state/drafts'
 import { flushPendingEdits, useSpecStore } from '../state/spec'
 import { useStore } from '../state/store'
 import { paragraphStartLine } from './markers'
@@ -87,6 +88,7 @@ export default function Row({ node, handle, active }: RowProps) {
           <span className="w-5" />
         )}
         <StatusDot node={node} />
+        <RereadChip node={node} />
         <HeadingLabel node={node} />
         <SaysInput node={node} />
         <LinkedClaims node={node} />
@@ -349,12 +351,36 @@ export function StatusDot({ node }: { node: SpecNode }) {
       data-status={kind ?? 'unknown'}
       data-reread={st?.reread ? 'true' : undefined}
     >
-      {/* A ring marks a node to re-read after a change above it (see NodeStatus.reread). */}
+      {/* A node to re-read after a change above it (NodeStatus.reread) gets the info colour
+          and a ring, so it stands out from the green "linked" dots; the RereadChip next to
+          the dot names the reason. */}
       <span
-        className={`block h-2.5 w-2.5 rounded-full ${kind ? DOT_CLASS[kind] : 'bg-base-300'} ${
-          st?.reread ? 'ring-2 ring-info ring-offset-1 ring-offset-base-100' : ''
+        className={`block h-2.5 w-2.5 rounded-full ${
+          st?.reread ? 'bg-info ring-2 ring-info/40 ring-offset-1 ring-offset-base-100' : kind ? DOT_CLASS[kind] : 'bg-base-300'
         }`}
       />
+    </button>
+  )
+}
+
+/**
+ * "re-read" next to the dot of a marked node, with the reason as its tooltip. Clicking it
+ * reconciles the node ("I re-read it"), the same as ⋯ → Reconcile.
+ */
+export function RereadChip({ node }: { node: SpecNode }) {
+  const reason = useSpecStore((s) => s.status[node.id]?.reread ?? null)
+  const reconcile = useSpecStore((s) => s.reconcile)
+  if (!reason) return null
+  return (
+    <button
+      type="button"
+      className="badge badge-xs badge-info badge-soft shrink-0 cursor-pointer"
+      onClick={() => void reconcile(node.id)}
+      title={`Re-read: ${reason}.\nThis node was written against the old version; re-read it, edit "says" if it no longer fits, or click here once checked.`}
+      data-testid="reread-chip"
+      data-node-id={node.id}
+    >
+      re-read
     </button>
   )
 }
@@ -495,6 +521,17 @@ function RowMenu({ node }: { node: SpecNode }) {
 
   // Phase 5: blind A/B compare of this paragraph against a snapshot or commit.
   const canCompare = node.level === 'paragraph' && !!node.anchor && (status === 'linked' || status === 'stale')
+  // Phase 7: draft this paragraph from its spec entry (any paragraph; planned ones insert).
+  const canDraft = node.level === 'paragraph'
+  const draft = () => {
+    close()
+    useDraftStore.getState().openFor({
+      nodeId: node.id,
+      says: node.says,
+      anchored: !!node.anchor && (status === 'linked' || status === 'stale'),
+      file: node.anchor?.file ?? null,
+    })
+  }
   const compare = () => {
     close()
     if (!node.anchor) return
@@ -557,6 +594,14 @@ function RowMenu({ node }: { node: SpecNode }) {
                 </label>
               </li>
             </>
+          )}
+          {canDraft && (
+            <li>
+              <button type="button" role="menuitem" onClick={draft} data-testid="menu-draft">
+                Draft from spec…
+                <span className="text-xs text-base-content/50">a model writes this paragraph from its says, function and claims; you decide what goes in</span>
+              </button>
+            </li>
           )}
           {canCompare && (
             <li>

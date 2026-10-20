@@ -480,7 +480,8 @@ export interface Run {
   /** Human-readable scope, e.g. "Section: Introduction". */
   scope_name: string
   /** "paste" for findings pasted back from a web UI. */
-  runner: RunnerName | 'paste'
+  /** 'author' is a human comment stored as a run of one finding (phase 8, Revise). */
+  runner: RunnerName | 'paste' | 'author'
   model: string | null
   thinking: string | null
   status: RunStatus
@@ -944,6 +945,10 @@ export type ServerEvent =
   | { type: 'git.finished'; op: 'push' | 'pull'; ok: boolean; error: string | null; changed?: string[] }
   /** A blind comparison ended (done or failed). `mapping` is never included here. */
   | { type: 'compare.finished'; comparison: Comparison }
+  /** A draft from the spec (phase 7) reached done or failed. */
+  | { type: 'draft.finished'; draft: Draft }
+  /** A rewrite proposal (phase 8, Revise) reached done or failed. */
+  | { type: 'revision.finished'; revision: Revision }
   /** A run group changed (phase 6): sent whenever one of its member runs changes. */
   | { type: 'group.updated'; group: RunGroup }
   /** A triage call ended (done or failed); the verdicts are on the findings now. */
@@ -1483,4 +1488,166 @@ export async function getTriage(runId: string): Promise<TriageResult> {
 /** POST /api/findings/dismiss-flagged: dismiss the run's findings that triage marked wrong or trivial. */
 export async function dismissFlagged(runId: string): Promise<number> {
   return (await sendJson<{ updated: number }>('POST', '/api/findings/dismiss-flagged', { run_id: runId })).updated
+}
+
+// ---- Phase 7: drafting from the spec -------------------------------------------------
+
+/** One draft of a paragraph node (POST /api/drafts). The model call writes nothing; `apply`
+ *  does, when the author asks. */
+export interface Draft {
+  id: string
+  node_id: string
+  run_id: string | null
+  status: 'queued' | 'running' | 'done' | 'failed'
+  /** The LaTeX paragraph, once done. */
+  text: string | null
+  /** The model's note for the authors (what the spec left open), possibly empty. */
+  notes: string | null
+  error: string | null
+  created_at: number
+  finished_at: number | null
+  applied_at: number | null
+  applied_mode: 'replace' | 'insert' | null
+  applied_file: string | null
+  applied_line_start: number | null
+  applied_line_end: number | null
+}
+
+export interface DraftDetail {
+  draft: Draft
+  run: Run | null
+}
+
+export interface DraftRequest {
+  node_id: string
+  runner?: string | null
+  model?: string | null
+  thinking?: string | null
+}
+
+/** Body of POST /api/drafts/{id}/apply: replace the paragraph under the node's marker, or
+ *  insert a new marker + the text before `line` of `file`. `text` is the author's edit. */
+export interface DraftApply {
+  mode: 'replace' | 'insert'
+  file?: string
+  line?: number
+  text?: string
+}
+
+export interface DraftApplied {
+  draft: Draft
+  file: string
+  line_start: number
+  line_end: number
+}
+
+export async function startDraft(request: DraftRequest): Promise<Draft> {
+  return (await sendJson<{ draft: Draft }>('POST', '/api/drafts', request)).draft
+}
+
+export function getDraft(id: string): Promise<DraftDetail> {
+  return getJson<DraftDetail>(`/api/drafts/${encodeURIComponent(id)}`)
+}
+
+export async function listDrafts(nodeId?: string, limit = 20): Promise<Draft[]> {
+  const query = nodeId ? `?node_id=${encodeURIComponent(nodeId)}&limit=${limit}` : `?limit=${limit}`
+  return (await getJson<{ drafts: Draft[] }>(`/api/drafts${query}`)).drafts
+}
+
+export function applyDraft(id: string, body: DraftApply): Promise<DraftApplied> {
+  return sendJson<DraftApplied>('POST', `/api/drafts/${encodeURIComponent(id)}/apply`, body)
+}
+
+// ---- Phase 8: Revise (comments and rewrite proposals) -------------------------------------
+
+/** Body of POST /api/findings/comment: an author comment on a span, stored as a finding. */
+export interface CommentRequest {
+  file: string
+  line_start: number
+  line_end: number
+  quote: string
+  problem: string
+  why?: string
+  json_ref?: string | null
+  severity?: FindingSeverity
+}
+
+export async function addComment(request: CommentRequest): Promise<Finding> {
+  return (await sendJson<{ finding: Finding }>('POST', '/api/findings/comment', request)).finding
+}
+
+export type RevisionSpan = 'quote' | 'paragraph'
+
+/** One rewrite proposal for a finding (POST /api/revisions). */
+export interface Revision {
+  id: string
+  finding_id: string
+  run_id: string | null
+  status: 'queued' | 'running' | 'done' | 'failed'
+  span: RevisionSpan
+  file: string
+  line_start: number
+  line_end: number
+  /** The span as it read when the proposal was made. */
+  original: string
+  /** The proposed replacement ("" = drop the span), once done. */
+  text: string | null
+  notes: string | null
+  error: string | null
+  created_at: number
+  finished_at: number | null
+  applied_at: number | null
+  applied_file: string | null
+  applied_line_start: number | null
+  applied_line_end: number | null
+}
+
+export interface RevisionDetail {
+  revision: Revision
+  run: Run | null
+  finding: Finding | null
+}
+
+export interface RevisionRequest {
+  finding_id: string
+  span?: RevisionSpan
+  runner?: string | null
+  model?: string | null
+  thinking?: string | null
+}
+
+export interface RevisionApplied {
+  revision: Revision
+  file: string
+  line_start: number
+  line_end: number
+  /** `\aigen{...}` wrappers in the paper after this write. */
+  outstanding: number
+}
+
+export interface Outstanding {
+  count: number
+  by_file: Record<string, number>
+}
+
+export async function startRevision(request: RevisionRequest): Promise<Revision> {
+  return (await sendJson<{ revision: Revision }>('POST', '/api/revisions', request)).revision
+}
+
+export function getRevision(id: string): Promise<RevisionDetail> {
+  return getJson<RevisionDetail>(`/api/revisions/${encodeURIComponent(id)}`)
+}
+
+export async function listRevisions(findingId?: string, limit = 20): Promise<Revision[]> {
+  const query = findingId ? `?finding_id=${encodeURIComponent(findingId)}&limit=${limit}` : `?limit=${limit}`
+  return (await getJson<{ revisions: Revision[] }>(`/api/revisions${query}`)).revisions
+}
+
+/** Approve: write the text (the author's edit) as \aigen{...} with the original kept on a comment line. */
+export function applyRevision(id: string, text: string): Promise<RevisionApplied> {
+  return sendJson<RevisionApplied>('POST', `/api/revisions/${encodeURIComponent(id)}/apply`, { text })
+}
+
+export function getOutstanding(): Promise<Outstanding> {
+  return getJson<Outstanding>('/api/revisions/outstanding')
 }

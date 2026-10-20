@@ -18,10 +18,12 @@ from app.compare import CompareManager
 from app.compiler import Compiler, get_compiler
 from app.compiler.docker import PullPublish, docker_image, pull
 from app.config import CompilerConfig
+from app.drafts import DraftManager
 from app.events import DockerPullFinished, EventBus, Watcher
 from app.gitops import GitManager
 from app.groups import GroupManager
 from app.repo import Repo
+from app.revise import ReviseManager
 from app.runner.auth import AuthCache
 from app.runs import RunManager
 from app.triage import TriageManager
@@ -72,6 +74,8 @@ class AppState:
         )
         # Blind A/B comparisons run on the review-run machinery.
         self.compare = CompareManager(self.bus, self.runs)
+        self.drafts = DraftManager(self.bus, self.runs)
+        self.revise = ReviseManager(self.bus, self.runs)
         # "Run both" and per-section fan-out groups of ordinary runs (phase 6).
         self.groups = GroupManager(self.bus, self.runs, lambda: self.repo)
         # Triage calls: one run's findings judged by a fresh call (phase 6).
@@ -91,6 +95,8 @@ class AppState:
         await self.groups.start()
         if self.repo is not None:
             await self.compare.on_repo_opened(self.repo)
+            await self.drafts.on_repo_opened(self.repo)
+            await self.revise.on_repo_opened(self.repo)
             await self.triage.on_repo_opened(self.repo)
 
     async def shutdown(self) -> None:
@@ -148,6 +154,8 @@ class AppState:
         await self._restart_watcher()
         await self.runs.on_repo_opened(repo)
         await self.compare.on_repo_opened(repo)
+        await self.drafts.on_repo_opened(repo)
+        await self.revise.on_repo_opened(repo)
         await self.groups.on_repo_opened(repo)
         await self.triage.on_repo_opened(repo)
 

@@ -793,6 +793,36 @@ export function createRunsApi(ctx) {
       if (Number.isFinite(duration_ms) && duration_ms >= 200) state.durationMs = duration_ms
       if (typeof codex_available === 'boolean') state.codexAvailable = codex_available
     },
+    // Phase 8 helpers for mock/revise.mjs: an author comment is a finding of an external run.
+    addFinding: (runId, f) => {
+      const rec = state.records.get(runId)
+      if (!rec) throw new RunsApiError(404, `No run ${runId}`)
+      const files = ctx.files()
+      const hit = files[f.file] != null ? findQuote(files[f.file], f.quote, f.line_start) : null
+      const finding = {
+        id: `f-${++state.findingSeq}`,
+        run_id: runId,
+        ...f,
+        state: 'open',
+        anchor_state: hit ? 'ok' : 'unverified',
+        anchor_line_start: hit ? hit.start : f.line_start,
+        anchor_line_end: hit ? hit.end : f.line_end,
+        created_at: now(),
+        triage_verdict: null,
+        triage_reason: null,
+      }
+      rec.findings.push(finding)
+      rec.run.findings_count = rec.findings.length
+      return { ...finding }
+    },
+    findingById: (id) => {
+      const f = allFindings().find((x) => x.id === id)
+      return f ? { ...f } : null
+    },
+    setFindingState: (id, value) => {
+      const f = allFindings().find((x) => x.id === id)
+      if (f) f.state = value
+    },
     // Phase 6 helpers for mock/groups.mjs.
     createMember,
     cancel,

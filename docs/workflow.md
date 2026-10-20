@@ -56,6 +56,38 @@ the way that field's reviewer would. `latex-hygiene` and `ab-compare` opt out (`
 A style describes what a reviewer will not accept, never phrasing to use; add a file for your
 own venue and it appears in the dropdown.
 
+## Drafting from the spec (separate from review)
+
+Generation and review are two activities with two prompt stacks. The review passes may not
+write a word; `prompts/drafts/` does nothing else. On a paragraph row, ⋯ → **Draft from
+spec…** asks a model for one paragraph that realizes the node: its local message, its
+function, its linked claims (within their evidence and scope), in the voice of the section's
+current LaTeX, using only labels and bib keys that exist. The answer arrives in a dialog as
+editable LaTeX with the model's notes (what the spec left open, every `\todo` it wrote).
+Nothing is written until you choose **Replace paragraph** (the node has a marker; the old text
+goes, a `% drafted by …` comment goes in, and the node turns stale so you re-read it) or
+**Insert at cursor** (a planned node: the marker and the text are written where the editor's
+cursor is, and the node is linked). Drafts are never cached, never appear in the Run menu, and
+the field's writing style applies to them as to the passes. Use them for the paragraphs whose
+job the spec already states precisely; the review passes then review the result like any text.
+
+## Revising on a comment (yours or a finding's)
+
+Select text in the editor, right-click, **Comment…**, and write what should change ("too
+verbose", "these two sentences disconnect; add a bridge", "not needed", "split into two
+paragraphs"). The comment becomes a finding of your own: a card in the findings column with a
+"comment" badge, the highlight, re-anchoring when the text moves, and the open / addressed /
+dismissed states. Every finding card, yours or a pass's, has **Rewrite…**: a model proposes a
+replacement for the quoted span or for the whole paragraph, changing only what the comment
+asks, within the paragraph's spec entry and the field's standard of evidence. The dialog shows
+a word diff and the editable proposal; **Approve** writes it as `\aigen{…}` (one wrapper per
+paragraph) with the original kept on a `% aigen-was:` line above, adds the `\aigen` macro to
+`main.tex` once, marks the finding addressed, and the paragraph turns stale for re-reading. An
+empty proposal drops the span. The header counts "N AI edits pending": the wrappers still in
+the paper. Co-authors accept by removing a wrapper and its `% aigen-was:` line (in Overleaf or
+here); `latex-hygiene` reports any left before submission, and the commented-out
+`\renewcommand{\aigen}[1]{#1}` in the preamble renders them all as plain text for a clean build.
+
 ## While writing
 
 1. **Spec before prose, one level at a time.** Fill the message card first (the takeaway,
@@ -64,7 +96,8 @@ own venue and it appears in the dropdown.
    promise per section and its `figure_story`, naming figures by label (`fig:pipeline`), never
    by number. Paragraph rows last, as planned nodes with `says` and `function` and no text yet.
 2. **Realize paragraph by paragraph.** Write the paragraph, then adopt it from the Skeleton
-   panel (or drag the planned row onto it) so the `% @p` marker links text and node. Link the
+   panel (or drag the planned row onto it) so the `% @p` marker links text and node; or let
+   ⋯ → Draft from spec… propose the paragraph from its entry and insert it at the cursor. Link the
    claims it argues. The coverage matrix shows a claim argued nowhere or a section arguing
    nothing.
 3. **Run narrow passes as you go.** After drafting a section, run `paragraph-function` on it

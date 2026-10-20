@@ -27,7 +27,10 @@ Keep any correction to the markup itself and do not reword prose.
 - references without a non-breaking space (`Figure \ref{...}` instead of
   `Figure~\ref{...}`), numbers and units without a thin space, math typed outside math
   mode, `"` quotes instead of ``` `` ''```;
-- hard-coded numbers for figures, tables, sections or equations instead of `\ref`.
+- hard-coded numbers for figures, tables, sections or equations instead of `\ref`;
+- `\aigen{...}` wrappers and `% aigen-was:` lines left in the source: text a model proposed
+  on a comment that the co-authors have not accepted yet (they accept by removing the
+  wrapper); a submission must have none.
 
 ### Source
 
@@ -40,6 +43,6 @@ Return one JSON object matching this schema, and nothing else:
 {{ findings_schema }}
 
 Use `"level": "sentence"` and one of these categories: `undefined-ref`, `label`,
-`citation`, `notation`, `typography`, `hard-coded-number`. Quote the markup exactly as it
+`citation`, `notation`, `typography`, `hard-coded-number`, `aigen-leftover`. Quote the markup exactly as it
 appears. Set `json_ref` to null unless the finding concerns a specific spec entry. If you
 find no problems, return `{"findings": []}`.

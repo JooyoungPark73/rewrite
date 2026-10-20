@@ -748,16 +748,21 @@ test('re-read marks: a changed claim rings the rows that argue it; Reconcile and
   await expect(dot(page, 'intro-1')).toHaveAttribute('data-reread', 'true')
   await expect(dot(page, 'p-2')).not.toHaveAttribute('data-reread', 'true')
   await expect(dot(page, 'p-1')).toHaveAttribute('aria-label', /Re-read: claim c1 changed/)
+  // The row carries a "re-read" chip naming the reason; the claim card itself has none.
+  await expect(row(page, 'p-1').getByTestId('reread-chip')).toHaveAttribute('title', /claim c1 changed/)
+  await expect(page.locator('[data-testid="claim-card"][data-claim-id="c1"]').getByTestId('reread-chip')).toHaveCount(0)
   // Editing the paragraph's says clears its mark.
   await saysInput(page, 'p-1').fill('Argues the narrowed claim')
   await saysInput(page, 'p-1').blur()
   await expect(dot(page, 'p-1')).not.toHaveAttribute('data-reread', 'true')
   await expect(page.getByTestId('reread-badge')).toHaveText('1 to re-read')
-  // ⋯ → Reconcile clears the section's mark.
+  // Clicking the section's "re-read" chip reconciles it (same as ⋯ → Reconcile, which is offered too).
   await row(page, 'intro-1').getByTestId('row-menu-button').click()
   await expect(page.getByTestId('menu-reconcile')).toContainText('I re-read it')
-  await page.getByTestId('menu-reconcile').click()
+  await page.keyboard.press('Escape')
+  await row(page, 'intro-1').getByTestId('reread-chip').click()
   await expect(dot(page, 'intro-1')).not.toHaveAttribute('data-reread', 'true')
+  await expect(row(page, 'intro-1').getByTestId('reread-chip')).toHaveCount(0)
   await expect(page.getByTestId('reread-badge')).toHaveCount(0)
   // A changed section promise marks its paragraphs.
   await saysInput(page, 'intro-1').fill('A new promise')

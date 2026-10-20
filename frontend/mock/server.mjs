@@ -103,6 +103,8 @@ import { createHash } from 'node:crypto'
 import http from 'node:http'
 import { WebSocketServer } from 'ws'
 import { createCompareApi, isComparePath } from './compare.mjs'
+import { createDraftsApi, isDraftsPath } from './drafts.mjs'
+import { createReviseApi, isRevisePath } from './revise.mjs'
 import { createGitApi, isGitPath } from './git.mjs'
 import { createGroupsApi, isGroupsPath } from './groups.mjs'
 import { createRunsApi, isRunsPath } from './runs.mjs'
@@ -436,6 +438,33 @@ const compareApi = createCompareApi({
   readBody,
 })
 
+// Phase 8: comments and rewrite proposals (mock/revise.mjs) on top of the runs module.
+const reviseApi = createReviseApi({
+  files: () => state.files,
+  setFile: (path, text) => {
+    state.files[path] = text
+    state.mtimes[path] = Date.now() / 1000
+  },
+  runs: runsApi,
+  broadcast,
+  sendJson,
+  readBody,
+})
+
+// Phase 7: drafts from the spec (mock/drafts.mjs) on top of the runs module.
+const draftsApi = createDraftsApi({
+  files: () => state.files,
+  setFile: (path, text) => {
+    state.files[path] = text
+    state.mtimes[path] = Date.now() / 1000
+  },
+  spec: () => readSpec().spec,
+  runs: runsApi,
+  broadcast,
+  sendJson,
+  readBody,
+})
+
 // ---------------------------------------------------------------------------
 // HTTP routes
 // ---------------------------------------------------------------------------
@@ -456,6 +485,8 @@ async function handle(req, res) {
     groupsApi.reset()
     gitApi.reset()
     compareApi.reset()
+    draftsApi.reset()
+    reviseApi.reset()
     return sendJson(res, 200, { ok: true })
   }
   if (route === 'GET /__mock/p5-log') return sendJson(res, 200, [...gitApi.log(), ...compareApi.log()])
@@ -469,6 +500,16 @@ async function handle(req, res) {
   }
   if (route === 'GET /__mock/runs-log') return sendJson(res, 200, runsApi.log())
   if (route === 'GET /__mock/groups-log') return sendJson(res, 200, groupsApi.log())
+  if (route === 'POST /__mock/revise-config') {
+    reviseApi.configure((await readBody(req)) ?? {})
+    return sendJson(res, 200, { ok: true })
+  }
+  if (route === 'GET /__mock/revise-log') return sendJson(res, 200, reviseApi.log())
+  if (route === 'POST /__mock/drafts-config') {
+    draftsApi.configure((await readBody(req)) ?? {})
+    return sendJson(res, 200, { ok: true })
+  }
+  if (route === 'GET /__mock/drafts-log') return sendJson(res, 200, draftsApi.log())
   if (route === 'POST /__mock/groups-config') {
     groupsApi.configure((await readBody(req)) ?? {})
     return sendJson(res, 200, { ok: true })
@@ -695,6 +736,8 @@ async function handle(req, res) {
 
   // ---- Phase 6: run groups, triage (before the runs routes they extend) --------
   if (isGroupsPath(url.pathname)) return groupsApi.handle(req, res, url)
+  if (isDraftsPath(url.pathname)) return draftsApi.handle(req, res, url)
+  if (isRevisePath(url.pathname)) return reviseApi.handle(req, res, url)
 
   // ---- Phase 4: passes, runs, findings -----------------------------------------
   if (isRunsPath(url.pathname)) return runsApi.handle(req, res, url)

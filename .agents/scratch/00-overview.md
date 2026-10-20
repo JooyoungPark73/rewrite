@@ -19,6 +19,8 @@ verified, with a `### macOS acceptance 2026-10-19` table per phase.
 | 4 Pass runner | `phase-4-pass-runner.md` | Linux-verified 2026-10-18; macOS 2026-10-19: checks 1–5 pass, 6–7 partial (clipboard copy not verified; a rewrite-baiting pass yields no rejected findings under claude's structured output, validator proven via paste-back) |
 | 5 A/B, git, coverage | `phase-5-ab-git-coverage.md` | macOS-verified 2026-10-19 (Linux 2026-10-18); push/pull against a real GitHub remote still open (gh token invalid on this machine) |
 | 6 Polish | `phase-6-polish.md` | Linux-verified 2026-10-18; macOS 2026-10-19: checks 1 and 3 pass, 2 partial (the model flagged nothing trivial, so "Dismiss all flagged" never ran); Tauri wrap documented, not built |
+| 7 Drafting from the spec | `phase-7-drafting.md` | built and verified 2026-10-20 (backend tests, mock e2e, one real draft through the dialog on macOS) |
+| 8 Revise (comments, rewrite proposals, \aigen) | `phase-8-revise.md` | built and verified 2026-10-20 (backend tests, mock e2e, one real rewrite on macOS) |
 
 ## Environment facts (macOS acceptance machine, 2026-10-19)
 

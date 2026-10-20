@@ -177,6 +177,7 @@ class RunPlan:
     # Phase 5 extension points (None = a review run: findings schema, findings parsing).
     schema: dict[str, Any] | None = None  # the answer schema passed to the CLI
     interpret: Callable[[RunResult], RunOutcome] | None = None  # parse an "ok" result
+    free_text: bool = False  # no structured-output schema; `interpret` reads the text
     # Called once (blocking, on the event loop) with the final Run and RunOutcome.data.
     on_finished: Callable[[Run, Any], None] | None = None
     # Phase 6: runs whose plans name different variants of one scope key may be active at
@@ -191,7 +192,12 @@ class RunPlan:
         return f"{self.scope_key}{VARIANT_SEP}{self.scope_variant}"
 
     @property
-    def answer_schema(self) -> dict[str, Any]:
+    def answer_schema(self) -> dict[str, Any] | None:
+        """The structured-output schema sent to the CLI: the plan's own, else the findings
+        schema; None for a free-text plan (phase 7 drafts answer in LaTeX, not JSON, because
+        JSON string escapes mangle `\\ref`, `\\textsc`, `\\newline`)."""
+        if self.free_text:
+            return None
         return self.schema if self.schema is not None else findings_schema()
 
     @property
@@ -527,6 +533,7 @@ class RunManager:
         schema: dict[str, Any] | None = None,
         scope_key_override: str | None = None,
         cacheable: bool = True,
+        free_text: bool = False,
     ) -> RunPlan:
         """Settle runner, model, thinking, argv and cache key for an assembled prompt (the
         rules of `plan`). `schema` replaces the findings schema; `cacheable=False` gives the
@@ -558,7 +565,7 @@ class RunManager:
             config.runner.timeout_s,
             allow_api_keys=config.runner.allow_api_keys,
         )
-        answer_schema = schema if schema is not None else findings_schema()
+        answer_schema = None if free_text else (schema if schema is not None else findings_schema())
         command = runner_obj.command(chosen_model, chosen_thinking, schema=answer_schema)
         return RunPlan(
             assembled=assembled,
@@ -573,6 +580,7 @@ class RunManager:
             probe=probe,
             config=config,
             schema=schema,
+            free_text=free_text,
         )
 
     def _plan_request(self, repo: Repo, request: RunRequest) -> RunPlan:

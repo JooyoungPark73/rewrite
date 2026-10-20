@@ -251,7 +251,15 @@ def test_root_serves_built_frontend(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "index.html").write_text("<!doctype html><title>pb</title>")
+    (dist / "assets").mkdir()
+    (dist / "assets" / "index-abc123.js").write_text("console.log(1)")
     app = create_app(None, watch=False, frontend_dist=dist)
     with TestClient(app, base_url="http://127.0.0.1") as c:
-        assert "<title>pb</title>" in c.get("/").text
+        root = c.get("/")
+        assert "<title>pb</title>" in root.text
+        # The HTML must be revalidated on every load (a cached index.html would keep pointing
+        # at the previous build's hashed bundles); the bundles themselves may be cached.
+        assert root.headers["cache-control"] == "no-cache"
+        assert c.get("/index.html").headers["cache-control"] == "no-cache"
+        assert "cache-control" not in c.get("/assets/index-abc123.js").headers
         assert c.get("/api/health").json()["ok"] is True

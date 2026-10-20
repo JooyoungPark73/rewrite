@@ -224,6 +224,54 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    # 7: drafts from the spec (phase 7, 2026-10-20).
+    (
+        """
+        CREATE TABLE drafts (
+            id                 TEXT PRIMARY KEY,
+            node_id            TEXT NOT NULL,
+            run_id             TEXT,
+            status             TEXT NOT NULL,
+            text               TEXT,
+            notes              TEXT,
+            error              TEXT,
+            created_at         REAL NOT NULL,
+            finished_at        REAL,
+            applied_at         REAL,
+            applied_mode       TEXT,
+            applied_file       TEXT,
+            applied_line_start INTEGER,
+            applied_line_end   INTEGER
+        )
+        """,
+        "CREATE INDEX drafts_node ON drafts (node_id, created_at)",
+    ),
+    # 8: rewrite proposals on comments / findings (phase 8, Revise, 2026-10-20).
+    (
+        """
+        CREATE TABLE revisions (
+            id                 TEXT PRIMARY KEY,
+            finding_id         TEXT NOT NULL,
+            run_id             TEXT,
+            status             TEXT NOT NULL,
+            span               TEXT NOT NULL,
+            file               TEXT NOT NULL,
+            line_start         INTEGER NOT NULL,
+            line_end           INTEGER NOT NULL,
+            original           TEXT NOT NULL,
+            text               TEXT,
+            notes              TEXT,
+            error              TEXT,
+            created_at         REAL NOT NULL,
+            finished_at        REAL,
+            applied_at         REAL,
+            applied_file       TEXT,
+            applied_line_start INTEGER,
+            applied_line_end   INTEGER
+        )
+        """,
+        "CREATE INDEX revisions_finding ON revisions (finding_id, created_at)",
+    ),
 )
 
 

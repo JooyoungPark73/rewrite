@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.responses import Response
 
 from app import __version__
 from app.api import routers
@@ -55,6 +56,21 @@ def _watch_default() -> bool:
     return os.environ.get("REWRITE_NO_WATCH", "").strip() not in ("1", "true", "yes")
 
 
+class _FrontendFiles(StaticFiles):
+    """frontend/dist with `Cache-Control: no-cache` on the HTML. Vite names the bundles by
+    content hash, so the browser may cache those forever, but a cached index.html would keep
+    pointing at the previous build after `npm run build` + `make restart`; `no-cache` makes
+    the browser revalidate it (ETag) on every load."""
+
+    def file_response(self, *args, **kwargs) -> Response:  # type: ignore[override]
+        response = super().file_response(*args, **kwargs)
+        if response.media_type == "text/html" or str(
+            response.headers.get("content-type", "")
+        ).startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 def create_app(
     repo: Path | None = None,
     *,
@@ -85,7 +101,7 @@ def create_app(
         app.include_router(router)
 
     if frontend_dist is not None and (frontend_dist / "index.html").is_file():
-        app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+        app.mount("/", _FrontendFiles(directory=frontend_dist, html=True), name="frontend")
     else:
 
         @app.get("/", response_model=RootInfo)

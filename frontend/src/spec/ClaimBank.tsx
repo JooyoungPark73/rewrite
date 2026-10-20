@@ -21,7 +21,7 @@ import { LEVEL_FIELDS } from '../api/client'
 import { flushPendingEdits, useSpecStore } from '../state/spec'
 import { useStore } from '../state/store'
 import { claimDragId, type DragData } from './dnd'
-import { StatusDot } from './Row'
+import { RereadChip, StatusDot } from './Row'
 import TextField from './TextField'
 import { claimColor, claimUsage, fieldLabel } from './tree'
 
@@ -150,6 +150,7 @@ function ClaimCard({ claim, uses }: { claim: SpecNode; uses: number }) {
     >
       <div className="mb-1 flex items-center gap-2">
         <StatusDot node={claim} />
+        <RereadChip node={claim} />
         <span
           ref={setNodeRef}
           {...listeners}

@@ -20,6 +20,7 @@
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { FINDING_LEVELS, type Finding, type FindingState } from '../api/client'
 import { VERDICT_STYLE } from '../state/groups'
+import { useReviseStore } from '../state/revise'
 import { useRunsStore } from '../state/runs'
 import { ANCHOR_BADGE, formatLines, levelChip, SEVERITY_STYLE, showSpecNode } from './format'
 
@@ -72,6 +73,11 @@ export default function FindingCard({ finding, selected, onOpen, showFile = true
         <span className={`badge badge-xs ${severity.badge}`} data-testid="finding-severity">
           {finding.severity}
         </span>
+        {finding.category === 'comment' && (
+          <span className="badge badge-xs badge-soft badge-accent" title="Your own comment (not a model finding)" data-testid="comment-badge">
+            comment
+          </span>
+        )}
         <span className={`badge badge-xs border ${levelChip(finding.level)}`}>{finding.level}</span>
         {finding.category && <span className="badge badge-xs badge-outline">{finding.category}</span>}
         <span
@@ -139,6 +145,19 @@ export default function FindingCard({ finding, selected, onOpen, showFile = true
           </button>
         )}
         <span className="ml-auto flex gap-1">
+          {/* Phase 8 (Revise): a model proposes a rewrite for the quoted span or the paragraph. */}
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs"
+            onClick={(e) => {
+              e.stopPropagation()
+              useReviseStore.getState().openFor(finding)
+            }}
+            title="Ask a model for a rewrite that answers this finding; you see the diff and approve it (written as \\aigen{…})"
+            data-testid="finding-rewrite"
+          >
+            ✎ Rewrite…
+          </button>
           {finding.state === 'open' ? (
             <>
               <button

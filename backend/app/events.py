@@ -130,6 +130,20 @@ class GitFinished(BaseModel):
     changed: list[str] = []  # + pull: repo-relative paths the pull changed
 
 
+class DraftFinished(BaseModel):
+    """A draft (phase 7) reached done or failed; `draft` is the Draft row."""
+
+    type: Literal["draft.finished"] = "draft.finished"
+    draft: dict[str, Any]
+
+
+class RevisionFinished(BaseModel):
+    """A rewrite proposal (phase 8, Revise) reached done or failed; `revision` is the row."""
+
+    type: Literal["revision.finished"] = "revision.finished"
+    revision: dict[str, Any]
+
+
 class CompareFinished(BaseModel):
     """A blind A/B comparison reached done or failed. `comparison.mapping` is always null
     here: the mapping is revealed only by GET /api/compare/{id}?reveal=true."""
@@ -168,6 +182,8 @@ Event = (
     | GitOutput
     | GitFinished
     | CompareFinished
+    | DraftFinished
+    | RevisionFinished
     | GroupUpdated
     | TriageFinished
 )

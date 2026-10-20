@@ -20,6 +20,7 @@
 // returns the focus to the editor). A click anywhere else, scrolling or
 // resizing the window also closes it.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useReviseStore } from '../state/revise'
 import { runMenuAction, useEditorMenuStore, type MenuAction } from './contextActions'
 
 interface Item {
@@ -86,6 +87,12 @@ export default function ContextMenu() {
         { action: 'claim', label: '…then lift to claim', hint: 'adopt, then a new linked claim', testId: 'ctx-adopt-claim' },
       ]
   items.push(
+    {
+      action: 'comment',
+      label: 'Comment…',
+      hint: 'a note on this text, as a finding; “Rewrite…” on its card proposes a change',
+      testId: 'ctx-comment',
+    },
     { action: 'thesis', label: 'Set as argument', hint: 'the message card’s Argument field (`thesis` in paper.json)', testId: 'ctx-set-thesis' },
     {
       action: 'compare',
@@ -99,6 +106,17 @@ export default function ContextMenu() {
   const choose = (action: MenuAction) => {
     const current = menu
     close()
+    if (action === 'comment') {
+      // Phase 8 (Revise): the comment box takes over; the comment becomes a finding.
+      useReviseStore.getState().openComment({
+        file: current.file,
+        lineStart: current.lineStart,
+        lineEnd: current.lineEnd,
+        quote: current.text,
+        nodeId: current.nodeId ?? null,
+      })
+      return
+    }
     void runMenuAction(current, action)
   }
 

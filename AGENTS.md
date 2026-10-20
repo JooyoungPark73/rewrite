@@ -11,8 +11,12 @@ acceptance (2026-10-19). Phases 1, 2, 3 and 5 are macOS-verified (PLAN.md's defi
 done). Phase 4 and phase 6 each have two checks verified only in part (clipboard copy,
 rewrite rejection from a live pass, triage flagging nothing trivial) and phase 5's git panel
 was exercised against a local bare remote, not a real GitHub remote; see the
-`### macOS acceptance 2026-10-19` tables in `.agents/scratch/phase-N-*.md`. The optional Tauri
-wrap is not built. Briefs and per-phase status live in `.agents/scratch/`; the user-facing
+`### macOS acceptance 2026-10-19` tables in `.agents/scratch/phase-N-*.md`. Phase 7 (2026-10-20) adds drafting from the spec as a separate activity from review
+(`prompts/drafts/`, `app/drafts.py`, the Draft dialog); phase 8 (2026-10-20) adds Revise:
+author comments as findings and model rewrite proposals approved into `\aigen{...}` wrappers
+(`app/revise.py`, `prompts/drafts/rewrite.md`); see `phase-7-drafting.md` and
+`phase-8-revise.md`. The app covers Write, Revise and Review. The optional
+Tauri wrap is not built. Briefs and per-phase status live in `.agents/scratch/`; the user-facing
 workflow and prompt-set description is `docs/workflow.md`.
 See "Build phases" in PLAN.md for the scope of each phase. Do not start phase N+1 work while phase N's manual checks are open.
 

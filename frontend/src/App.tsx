@@ -46,6 +46,9 @@ import { useEffect, useRef, useState } from 'react'
 import { errorMessage, listDirs, type DirListing, type Health, type ServerEvent, type ToolAvailability } from './api/client'
 import { useServerEvents, type SocketStatus } from './api/ws'
 import CompareDialog from './compare/CompareDialog'
+import DraftDialog from './spec/DraftDialog'
+import CommentBox from './revise/CommentBox'
+import RevisionDialog from './revise/RevisionDialog'
 import ErrorList from './compile/ErrorList'
 import ContextMenu from './editor/ContextMenu'
 import Editor, { type EditorHandle } from './editor/Editor'
@@ -60,6 +63,8 @@ import { useTabDropTarget } from './spec/dnd'
 import { EditorDropZone, SpecDndProvider } from './spec/SpecDnd'
 import SpecView, { SpecToast } from './spec/SpecView'
 import { useCompareStore } from './state/compare'
+import { useDraftStore } from './state/drafts'
+import { useReviseStore } from './state/revise'
 import { useGitStore } from './state/git'
 import { useRunsStore, useVisibleFileFindings } from './state/runs'
 import { useSpecStore } from './state/spec'
@@ -110,6 +115,14 @@ export default function App() {
   const setGitOpen = useGitStore((s) => s.setOpen)
   const gitChanges = useGitStore((s) => (s.status?.is_repo ? s.status.files.length : null))
   const compareOpen = useCompareStore((s) => s.target !== null)
+  const draftOpen = useDraftStore((s) => s.target !== null)
+  const commentOpen = useReviseStore((s) => s.commentTarget !== null)
+  const revisionOpen = useReviseStore((s) => s.finding !== null)
+  const outstanding = useReviseStore((s) => s.outstanding.count)
+  const refreshOutstanding = useReviseStore((s) => s.refreshOutstanding)
+  useEffect(() => {
+    if (repo) void refreshOutstanding()
+  }, [repo, refreshOutstanding])
 
   // The Open dialog shows when the user asks for it, and always while no repo is open.
   const [dialogRequested, setDialogRequested] = useState(false)
@@ -126,6 +139,8 @@ export default function App() {
     useRunsStore.getState().handleServerEvent(event)
     useGitStore.getState().handleServerEvent(event)
     useCompareStore.getState().handleServerEvent(event)
+    useDraftStore.getState().handleServerEvent(event)
+    useReviseStore.getState().handleServerEvent(event)
   })
 
   // Phase 4: load passes, runners, runs and findings whenever a repo opens,
@@ -257,6 +272,15 @@ export default function App() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
+          {outstanding > 0 && (
+            <span
+              className="badge badge-sm badge-warning badge-soft"
+              title="\\aigen{…} wrappers in the paper: rewrites approved here, awaiting the co-authors (accept = remove the wrapper and the % aigen-was: line)"
+              data-testid="outstanding-badge"
+            >
+              {outstanding} AI edit{outstanding === 1 ? '' : 's'} pending
+            </span>
+          )}
           <HealthChips health={health} error={healthError} />
           <SocketDot status={socket} />
           <button
@@ -442,6 +466,9 @@ export default function App() {
       {/* Phase 5: git drawer, blind compare dialog, editor selection menu. */}
       {repo && gitOpen && <GitPanel onClose={() => setGitOpen(false)} />}
       {repo && compareOpen && <CompareDialog />}
+      {repo && draftOpen && <DraftDialog />}
+      {repo && commentOpen && <CommentBox />}
+      {repo && revisionOpen && <RevisionDialog />}
       <ContextMenu />
 
       {(dialogRequested || (repoChecked && !repo)) && (

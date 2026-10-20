@@ -80,6 +80,24 @@ the old claim. A changed section promise rings its paragraphs; a changed message
 sections. The header counts them ("3 to re-read"); editing a ringed node's `says` or choosing
 ⋯ → Reconcile ("I re-read it") clears the ring. Links, notes and moves ring nothing.
 
+## Drafting a paragraph from its entry
+
+Every paragraph row's ⋯ menu has **Draft from spec…**: a model writes the paragraph from its
+`says`, `function` and linked claims, in the voice of the section, and shows it for editing;
+nothing enters the `.tex` until you press Replace paragraph or Insert at cursor. Try it on
+`p-8` ("Point to fig:pipeline"): the draft points at the figure and says what it shows, and
+after Replace the row is stale until you re-read it. Drafting is separate from review (its own
+prompts in `.rewrite/prompts/drafts/`); the review passes then judge the drafted text like any
+other.
+
+## Revising a sentence on a comment
+
+Select the second sentence of the second introduction paragraph ("Warm pools trade memory for
+latency, and the trade is poor …"), right-click, **Comment…**: "Too verbose; say it in one
+sentence." The comment appears as a finding; its **Rewrite…** proposes a shorter sentence, and
+Approve writes it as `\aigen{…}` with the original on a `% aigen-was:` line, for your co-authors
+to accept in Overleaf by removing the wrapper. The row turns stale until you re-read it.
+
 ## Using it with the review passes
 
 This is a systems paper, so its `.rewrite/config.toml` (shipped with the example; `rewrite

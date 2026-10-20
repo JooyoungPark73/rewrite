@@ -4,7 +4,11 @@ Exported 2026-10-18 from the planning conversation.
 
 ## What it is and what is decided
 
-A local, Overleaf-like editor for a LaTeX git repo, plus an LLM flaw-finder that reviews the paper against a human-owned `paper.json` semantic spec. The LLM never writes prose, never praises, never sees editing history, and never touches `paper.json`. Reconciling critique into the spec is a human action done in the app's spec editor.
+A local, Overleaf-like editor for a LaTeX git repo, plus an LLM flaw-finder that reviews the paper against a human-owned `paper.json` semantic spec. The review passes never write prose, never praise, never see editing history, and never touch `paper.json`. Reconciling critique into the spec is a human action done in the app's spec editor.
+
+Decided 2026-10-20: drafting is a separate activity from review. On request, for one spec node at a time, the app can ask a model for a LaTeX draft that realizes that node (its `says`, `function` and linked claims, in the voice of the surrounding source). It uses its own prompt stack (`prompts/drafts/`), is never offered among the review passes, is never cached, and writes nothing on its own: the draft is shown to the author, who edits it and chooses to insert or replace; inserted text carries a `% drafted by` comment and comes up stale, so the normal re-read applies to model text too. The review rules above are untouched by it.
+
+Decided 2026-10-20 as well: **Revise**. The author (or a model finding) marks a span with a comment; a model proposes a rewrite of that span or its paragraph (same drafting stack, `prompts/drafts/rewrite.md`); the author sees a word diff, edits, and approves. The approved text is written as `\aigen{...}` per paragraph with the original kept on a `% aigen-was:` comment line above, main.tex gets the macro, the finding is marked addressed, the paragraph turns stale. Co-authors accept by removing the wrapper (in Overleaf or here); `latex-hygiene` flags leftovers. Author comments are findings of a run with runner `author`, so they share the sidebar, anchors and states with model findings. The app now covers Write (drafting), Revise and Review.
 
 Everything the app needs for a paper lives inside that paper's git repo under `.rewrite/`. Nothing is stored in user-scope or global directories.
 
@@ -211,7 +215,7 @@ The four rules are enforced by code, not only by prompt wording, so a prompt edi
 
 | Rule | Mechanism |
 | --- | --- |
-| No rewrites | The findings schema has no replacement field; a validator rejects findings that contain quoted replacement text unless the pass sets `allow_rewrites: true` |
+| No rewrites | The findings schema has no replacement field; a validator rejects findings that contain quoted replacement text unless the pass sets `allow_rewrites: true`. Drafting (`kind: draft`, `prompts/drafts/`) is not a review pass: it returns `{draft, notes}` to a dialog, never a finding, and the author decides what enters the `.tex` |
 | No praise | The schema admits only problems; zero findings is the only positive signal; any free-text preamble is stripped before parsing |
 | Clean context | Every run is a new process with a fully assembled prompt; no session ids are reused; no editing history or prior findings enter a prompt except in the explicit triage call |
 | Read-only `paper.json` | Runner cwd is `.rewrite/sandbox/` with tools disabled, so the CLI cannot reach the file; the app never writes `paper.json` from model output |

@@ -166,7 +166,7 @@ function quote(text: string): string {
   return `“${text.length > 60 ? `${text.slice(0, 57)}…` : text}”`
 }
 
-export type MenuAction = 'message' | 'claim' | 'thesis' | 'compare'
+export type MenuAction = 'message' | 'claim' | 'thesis' | 'compare' | 'comment'
 
 /** Set the node's `says`. */
 async function setMessage(steps: Steps, nodeId: string, text: string): Promise<string | null> {
