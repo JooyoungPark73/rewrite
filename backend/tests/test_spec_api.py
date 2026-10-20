@@ -446,7 +446,7 @@ def test_relink_moves_the_marker(client: TestClient, initialized_repo: Path) -> 
     assert [i + 1 for i, line in enumerate(lines) if line == "% @p p-1"] == [16]
     assert lines[16].startswith("Snapshot restore")
     assert children(body["spec"], "introduction-1") == ["p-1"]
-    assert status(client)["p-1"] == {"status": "linked", "file": INTRO, "line": 16}
+    assert status(client)["p-1"] == {"status": "linked", "file": INTRO, "line": 16, "reread": None}
 
 
 # --------------------------------------------------------------------------- status
@@ -462,8 +462,8 @@ def test_status_transitions(client: TestClient, initialized_repo: Path) -> None:
         "new_id"
     ]
     assert status(client) == {
-        section_id: {"status": "planned", "file": None, "line": None},
-        para_id: {"status": "planned", "file": None, "line": None},
+        section_id: {"status": "planned", "file": None, "line": None, "reread": None},
+        para_id: {"status": "planned", "file": None, "line": None, "reread": None},
     }
 
     adopt_paragraph(client, INTRO, 11, id=para_id)  # drag the planned node onto the paragraph
@@ -476,8 +476,8 @@ def test_status_transitions(client: TestClient, initialized_repo: Path) -> None:
         )
     )
     assert status(client) == {
-        section_id: {"status": "linked", "file": INTRO, "line": 1},
-        para_id: {"status": "linked", "file": INTRO, "line": 11},
+        section_id: {"status": "linked", "file": INTRO, "line": 1, "reread": None},
+        para_id: {"status": "linked", "file": INTRO, "line": 11, "reread": None},
     }
 
     edit_tex(client, INTRO, "Warm pools trade memory", "Warm pools swap memory")
@@ -485,7 +485,13 @@ def test_status_transitions(client: TestClient, initialized_repo: Path) -> None:
     assert status(client)[section_id]["status"] == "linked"  # sections are never stale
 
     reconciled = ok(client.post(f"/api/spec/nodes/{para_id}/reconcile"))
-    assert reconciled == {"id": para_id, "status": "linked", "file": INTRO, "line": 11}
+    assert reconciled == {
+        "id": para_id,
+        "status": "linked",
+        "file": INTRO,
+        "line": 11,
+        "reread": None,
+    }
     assert status(client)[para_id]["status"] == "linked"
 
     # comment and whitespace edits do not make a paragraph stale
@@ -500,7 +506,12 @@ def test_status_transitions(client: TestClient, initialized_repo: Path) -> None:
     assert status(client)[para_id]["status"] == "linked"  # editing says does
 
     edit_tex(client, INTRO, f"% @p {para_id}\n", "")
-    assert status(client)[para_id] == {"status": "orphaned", "file": INTRO, "line": None}
+    assert status(client)[para_id] == {
+        "status": "orphaned",
+        "file": INTRO,
+        "line": None,
+        "reread": None,
+    }
     assert ok(client.post(f"/api/spec/nodes/{para_id}/reconcile"))["status"] == "orphaned"
     edit_tex(client, INTRO, "\\section{Introduction}", "\\section{Overview}")
     edit_tex(client, INTRO, "\\label{sec:intro}", "\\label{sec:overview}")
@@ -513,13 +524,19 @@ def test_status_transitions(client: TestClient, initialized_repo: Path) -> None:
 def test_status_and_reconcile_errors(client: TestClient, initialized_repo: Path) -> None:
     ok(client.put("/api/spec", json={"spec": sample_spec().model_dump(mode="json")}))
     nodes = status(client)
-    assert set(nodes) == {"introduction-1", "p-1", "p-2", "design-1", "p-3"}
+    assert set(nodes) - {"c1", "c2"} == {"introduction-1", "p-1", "p-2", "design-1", "p-3"}
     assert nodes["introduction-1"]["status"] == "linked"
-    assert nodes["p-1"] == {"status": "orphaned", "file": INTRO, "line": None}  # no marker yet
+    assert nodes["p-1"] == {
+        "status": "orphaned",
+        "file": INTRO,
+        "line": None,
+        "reread": None,
+    }  # no marker yet
     assert nodes["p-2"]["status"] == "planned"
     assert client.post("/api/spec/nodes/nope/reconcile").status_code == 404
     assert client.post("/api/spec/nodes/message/reconcile").status_code == 400
-    assert client.post("/api/spec/nodes/c1/reconcile").status_code == 400
+    # A claim can be reconciled now (it clears its re-read mark; no baseline to reset).
+    assert ok(client.post("/api/spec/nodes/c1/reconcile"))["status"] == "planned"
     assert ok(client.post("/api/spec/nodes/p-2/reconcile"))["status"] == "planned"
     (initialized_repo / "paper.json").write_text("[]")
     assert client.get("/api/spec/status").status_code == 409
@@ -579,8 +596,8 @@ def test_duplicate_labeled_headings_anchor_by_label(client: TestClient) -> None:
     assert anchors[second] == {"file": DISCUSSION, "marker": "\\label{sec:disc-b}"}
     assert anchors[first] == {"file": DISCUSSION, "marker": "\\label{sec:disc-a}"}
     nodes = status(client)
-    assert nodes[second] == {"status": "linked", "file": DISCUSSION, "line": 4}
-    assert nodes[first] == {"status": "linked", "file": DISCUSSION, "line": 1}
+    assert nodes[second] == {"status": "linked", "file": DISCUSSION, "line": 4, "reread": None}
+    assert nodes[first] == {"status": "linked", "file": DISCUSSION, "line": 1, "reread": None}
     again = client.post("/api/spec/adopt", json={"kind": "section", "file": DISCUSSION, "line": 4})
     assert again.status_code == 409 and "already adopted" in again.json()["detail"]
     sections = ok(client.get("/api/spec/skeleton"))["sections"]
@@ -604,7 +621,12 @@ def test_existing_ambiguous_heading_marker_is_orphaned(
             anchor={"file": DISCUSSION, "marker": "\\section{Discussion}"},
         )
     )
-    assert status(client)[section_id] == {"status": "orphaned", "file": DISCUSSION, "line": None}
+    assert status(client)[section_id] == {
+        "status": "orphaned",
+        "file": DISCUSSION,
+        "line": None,
+        "reread": None,
+    }
     preview = client.post(
         "/api/runs/preview",
         json={"pass": "section-promises", "scope": {"kind": "section", "ref": section_id}},
@@ -612,7 +634,12 @@ def test_existing_ambiguous_heading_marker_is_orphaned(
     assert preview.status_code == 400 and "orphaned" in preview.json()["detail"]
     # Renaming one of the headings leaves a single match: the anchor links again.
     edit_tex(client, DISCUSSION, "\\section{Discussion}\nSecond", "\\section{Limits}\nSecond")
-    assert status(client)[section_id] == {"status": "linked", "file": DISCUSSION, "line": 1}
+    assert status(client)[section_id] == {
+        "status": "linked",
+        "file": DISCUSSION,
+        "line": 1,
+        "reread": None,
+    }
 
 
 # --------------------------------------------------------------------------- audit item 5

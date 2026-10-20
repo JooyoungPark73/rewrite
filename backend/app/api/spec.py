@@ -145,6 +145,7 @@ class ReconcileResponse(BaseModel):
     status: StatusValue
     file: str | None = None
     line: int | None = None
+    reread: str | None = None  # always null after a reconcile
 
 
 class SkeletonSection(BaseModel):
@@ -325,13 +326,18 @@ async def get_status(repo: RepoDep, state: StateDep) -> StatusResponse | JSONRes
 async def reconcile(
     node_id: str, repo: RepoDep, state: StateDep
 ) -> ReconcileResponse | JSONResponse:
-    """ "I checked, the prose is right": re-baseline a stale paragraph without editing."""
+    """ "I checked": re-baseline a stale paragraph, and clear the node's re-read mark
+    (sections, paragraphs and claims)."""
 
     def work(events: list[Event]) -> ReconcileResponse:
         spec = require_spec(repo)
         status = anchors.reconcile(repo, spec, _scan(repo), node_id)
         return ReconcileResponse(
-            id=node_id, status=status.status, file=status.file, line=status.line
+            id=node_id,
+            status=status.status,
+            file=status.file,
+            line=status.line,
+            reread=status.reread,
         )
 
     return await _run(state, work)

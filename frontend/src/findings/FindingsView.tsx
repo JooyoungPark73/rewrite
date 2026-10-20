@@ -163,7 +163,7 @@ function RunDetailPane() {
 
       {/* Streamed output: open while the run is going, folded away afterwards (Raw output has it all). */}
       {running ? (
-        <LiveOutput chunks={live ?? []} running />
+        <LiveOutput chunks={live ?? []} running runner={run.runner} startedAt={run.started_at} />
       ) : (
         live &&
         live.length > 0 && (
@@ -233,17 +233,56 @@ function RunDetailPane() {
 }
 
 /** Streamed output of a run (model text plus status lines), kept scrolled to the end. */
-function LiveOutput({ chunks, running }: { chunks: LiveChunk[]; running: boolean }) {
+/**
+ * The streamed output of a run. claude streams text (and the structured-output JSON) as it is
+ * produced. codex does not: `codex exec --json` emits nothing between `turn.started` and the
+ * finished `agent_message` (measured 2026-10-19: 21 s of silence on a 250-word answer; plain
+ * `codex exec` is the same), so for codex the panel shows the elapsed time and says why.
+ */
+function LiveOutput({
+  chunks,
+  running,
+  runner,
+  startedAt,
+}: {
+  chunks: LiveChunk[]
+  running: boolean
+  runner?: string
+  startedAt?: number | null
+}) {
   const ref = useRef<HTMLPreElement>(null)
   useEffect(() => {
     const el = ref.current
     if (el) el.scrollTop = el.scrollHeight
   }, [chunks])
+  // Elapsed seconds since the run started, ticking while it runs.
+  const [now, setNow] = useState(() => Date.now() / 1000)
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => setNow(Date.now() / 1000), 1000)
+    return () => clearInterval(timer)
+  }, [running])
+  const elapsed = running && startedAt ? Math.max(0, Math.round(now - startedAt)) : null
+  const noPartialOutput = runner === 'codex'
   return (
     <div className="border-b border-base-300 px-3 py-2">
       <div className="mb-1 flex items-center gap-2 text-xs font-medium text-base-content/70">
         Live output
         {running && <span className="loading loading-xs loading-dots" />}
+        {elapsed !== null && (
+          <span className="font-normal text-base-content/50" data-testid="live-elapsed">
+            {elapsed}s
+          </span>
+        )}
+        {running && noPartialOutput && (
+          <span
+            className="font-normal text-base-content/50"
+            title="codex exec prints its answer only when it is complete; there is no partial output to show."
+            data-testid="live-no-partial"
+          >
+            codex sends no partial output; the answer arrives whole
+          </span>
+        )}
       </div>
       <pre
         ref={ref}

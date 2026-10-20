@@ -327,6 +327,10 @@ export function applyOp(input, op) {
       newId = nextId(spec, 'c')
       const claim = makeNode(newId, 'claim', op.says ?? '')
       Object.assign(claim.fields, op.fields ?? {})
+      if (op.anchor) {
+        if (!String(op.anchor.marker ?? '').trim()) throw new SpecApiError(422, 'a claim anchor is the sentence that states it; it is empty')
+        claim.anchor = { file: op.anchor.file, marker: op.anchor.marker }
+      }
       spec.claims.push(claim)
       break
     }
@@ -344,7 +348,9 @@ export function applyOp(input, op) {
       break
     }
     case 'set_anchor': {
-      mustNode(spec, op.id).anchor = op.anchor ?? null
+      const claim = spec.claims.find((c) => c.id === op.id)
+      if (claim) claim.anchor = op.anchor ?? null
+      else mustNode(spec, op.id).anchor = op.anchor ?? null
       break
     }
     default:
@@ -435,16 +441,16 @@ function* treeNodes(spec) {
  * planned / linked / stale / orphaned for every section and paragraph.
  * Mutates `baselines`: a paragraph seen for the first time gets one.
  */
-export function computeStatus(spec, files, baselines) {
+export function computeStatus(spec, files, baselines, rereads = {}) {
   const nodes = {}
   for (const node of treeNodes(spec)) {
     if (!node.anchor) {
-      nodes[node.id] = { status: 'planned', file: null, line: null }
+      nodes[node.id] = { status: 'planned', file: null, line: null, reread: null }
       continue
     }
     const hit = resolveAnchor(node.anchor, files)
     if (!hit) {
-      nodes[node.id] = { status: 'orphaned', file: node.anchor.file, line: null }
+      nodes[node.id] = { status: 'orphaned', file: node.anchor.file, line: null, reread: null }
       continue
     }
     let status = 'linked'
@@ -452,9 +458,68 @@ export function computeStatus(spec, files, baselines) {
       if (!(node.id in baselines)) baselines[node.id] = hit.hash
       if (baselines[node.id] !== hit.hash) status = 'stale'
     }
-    nodes[node.id] = { status, file: node.anchor.file, line: hit.line }
+    nodes[node.id] = { status, file: node.anchor.file, line: hit.line, reread: null }
   }
+  // Claims: anchored to the sentence that states them (whitespace-collapsed match).
+  for (const claim of spec.claims) nodes[claim.id] = { ...claimStatus(claim, files), reread: null }
+  for (const [id, reason] of Object.entries(rereads)) if (nodes[id]) nodes[id].reread = reason
   return nodes
+}
+
+/** planned / linked / stale / orphaned for a claim, as the real backend computes it. */
+function claimStatus(claim, files) {
+  if (!claim.anchor) return { status: 'planned', file: null, line: null }
+  const text = files[claim.anchor.file]
+  if (text === undefined) return { status: 'orphaned', file: claim.anchor.file, line: null }
+  const needle = collapse(claim.anchor.marker)
+  const pieces = []
+  text.split('\n').forEach((raw, i) => {
+    const t = collapse(raw.replace(/(^|[^\\])%.*$/, '$1'))
+    if (t) pieces.push([i + 1, t])
+  })
+  const joined = pieces.map(([, t]) => t).join(' ')
+  const at = needle ? joined.indexOf(needle) : -1
+  if (at < 0) return { status: 'stale', file: claim.anchor.file, line: null }
+  let offset = 0
+  for (const [line, t] of pieces) {
+    if (offset + t.length >= at) return { status: 'linked', file: claim.anchor.file, line }
+    offset += t.length + 1
+  }
+  return { status: 'linked', file: claim.anchor.file, line: pieces.at(-1)?.[0] ?? null }
+}
+
+/** All nodes of a spec by id (message, claims, tree). */
+function nodesById(spec) {
+  const out = new Map([[spec.message.id, spec.message]])
+  for (const c of spec.claims) out.set(c.id, c)
+  for (const n of treeNodes(spec)) out.set(n.id, n)
+  return out
+}
+
+const content = (n) => JSON.stringify([n.says, Object.entries(n.fields ?? {}).sort()])
+
+/**
+ * After a write: the re-read marks of the real backend (spec.reread_marks). A changed
+ * message marks the sections, a changed section its paragraphs, a changed claim every
+ * node linking it; a node whose own says/fields changed has its mark cleared.
+ */
+export function propagateRereads(previous, next, rereads) {
+  if (!previous) return
+  const before = nodesById(previous)
+  const marks = {}
+  const cleared = new Set()
+  for (const [id, node] of nodesById(next)) {
+    const prev = before.get(id)
+    if (!prev || content(prev) === content(node)) continue
+    cleared.add(id)
+    if (node.level === 'message') for (const s of next.tree.children) marks[s.id] = 'the message changed'
+    else if (node.level === 'section') for (const p of node.children) marks[p.id] = `the promise of ${node.id} changed`
+    else if (node.level === 'claim') for (const n of treeNodes(next)) if (n.claims.includes(id)) marks[n.id] = `claim ${id} changed`
+  }
+  for (const id of cleared) delete rereads[id]
+  for (const [id, reason] of Object.entries(marks)) if (!cleared.has(id)) rereads[id] = reason
+  const alive = nodesById(next)
+  for (const id of Object.keys(rereads)) if (!alive.has(id)) delete rereads[id]
 }
 
 /**
@@ -473,11 +538,16 @@ export function rebaseline(previous, next, files, baselines, force = []) {
 }
 
 /** POST /api/spec/nodes/{id}/reconcile: re-baseline one node; returns its {status, file, line}. */
-export function reconcile(spec, files, baselines, id) {
-  const loc = mustLocate(spec, id)
-  const hit = loc.node.anchor ? resolveAnchor(loc.node.anchor, files) : null
-  if (hit?.hash !== undefined) baselines[id] = hit.hash
-  return computeStatus(spec, files, baselines)[id]
+export function reconcile(spec, files, baselines, id, rereads = {}) {
+  if (id === spec.message.id) throw new SpecApiError(400, 'the message has no status to reconcile')
+  const claim = spec.claims.find((c) => c.id === id)
+  if (!claim) {
+    const loc = mustLocate(spec, id)
+    const hit = loc.node.anchor ? resolveAnchor(loc.node.anchor, files) : null
+    if (hit?.hash !== undefined) baselines[id] = hit.hash
+  }
+  delete rereads[id]
+  return computeStatus(spec, files, baselines, rereads)[id]
 }
 
 // ---------------------------------------------------------------------------

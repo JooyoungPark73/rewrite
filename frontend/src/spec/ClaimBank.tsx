@@ -19,7 +19,9 @@ import { useMemo, useState } from 'react'
 import type { Node as SpecNode } from '../api/client'
 import { LEVEL_FIELDS } from '../api/client'
 import { flushPendingEdits, useSpecStore } from '../state/spec'
+import { useStore } from '../state/store'
 import { claimDragId, type DragData } from './dnd'
+import { StatusDot } from './Row'
 import TextField from './TextField'
 import { claimColor, claimUsage, fieldLabel } from './tree'
 
@@ -71,6 +73,63 @@ export default function ClaimBank() {
   )
 }
 
+/**
+ * Where the claim is stated (its anchor), as a chip under the header: linked → file:line
+ * (click opens it), stale → "sentence not found" with Unlink, orphaned → the file name.
+ * A claim without an anchor shows nothing; "Lift to claim" on a sentence sets one.
+ */
+function ClaimAnchor({ claim }: { claim: SpecNode }) {
+  const st = useSpecStore((s) => s.status[claim.id])
+  const applyOp = useSpecStore((s) => s.applyOp)
+  const reconcile = useSpecStore((s) => s.reconcile)
+  const goToLocation = useStore((s) => s.goToLocation)
+  if (!claim.anchor) return null
+  const where = st?.file ? `${st.file.split('/').pop()}${st.line ? `:${st.line}` : ''}` : claim.anchor.file
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px]" data-testid="claim-anchor" data-status={st?.status ?? 'unknown'}>
+      {st?.status === 'linked' ? (
+        <button
+          type="button"
+          className="link link-hover font-mono text-base-content/60"
+          onClick={() => void goToLocation(st.file, st.line)}
+          title={`Stated at ${st.file}:${st.line}. Click to open it.`}
+          data-testid="claim-anchor-open"
+        >
+          stated at {where}
+        </button>
+      ) : st?.status === 'stale' ? (
+        <>
+          <span className="text-warning" title={`The sentence "${claim.anchor.marker}" is no longer in ${claim.anchor.file}.`}>
+            sentence not found in {where}
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs"
+            onClick={() => void applyOp({ type: 'set_anchor', id: claim.id, anchor: null })}
+            title="Forget the anchored sentence (lift the claim again from its new wording to re-anchor it)"
+            data-testid="claim-anchor-unlink"
+          >
+            Unlink
+          </button>
+        </>
+      ) : st?.status === 'orphaned' ? (
+        <span className="text-error">{claim.anchor.file} is not in the include tree</span>
+      ) : null}
+      {st?.reread && (
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs text-info"
+          onClick={() => void reconcile(claim.id)}
+          title={`Re-read: ${st.reread}. Click once you have checked the claim.`}
+          data-testid="claim-reconcile"
+        >
+          Checked
+        </button>
+      )}
+    </div>
+  )
+}
+
 function ClaimCard({ claim, uses }: { claim: SpecNode; uses: number }) {
   const applyOp = useSpecStore((s) => s.applyOp)
   const [confirming, setConfirming] = useState(false)
@@ -90,6 +149,7 @@ function ClaimCard({ claim, uses }: { claim: SpecNode; uses: number }) {
       data-claim-id={claim.id}
     >
       <div className="mb-1 flex items-center gap-2">
+        <StatusDot node={claim} />
         <span
           ref={setNodeRef}
           {...listeners}
@@ -145,6 +205,7 @@ function ClaimCard({ claim, uses }: { claim: SpecNode; uses: number }) {
         testId="claim-says"
         focusId={claim.id}
       />
+      <ClaimAnchor claim={claim} />
       <div className="mt-1 flex flex-col gap-1">
         {fieldKeys.map((key) => (
           <TextField

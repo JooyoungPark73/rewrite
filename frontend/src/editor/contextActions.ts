@@ -175,8 +175,10 @@ async function setMessage(steps: Steps, nodeId: string, text: string): Promise<s
 }
 
 /** New claim with the text, linked to the node when there is one. */
-async function liftToClaim(steps: Steps, nodeId: string | null, text: string): Promise<string | null> {
-  const added = await op(steps, { type: 'add_claim', says: text })
+async function liftToClaim(steps: Steps, nodeId: string | null, text: string, file: string): Promise<string | null> {
+  // The selection is the sentence that states the claim: anchor the claim to it, so the
+  // claim turns stale when that sentence is reworded (status dot on the claim card).
+  const added = await op(steps, { type: 'add_claim', says: text, anchor: { file, marker: text } })
   const claimId = added?.new_id
   if (!claimId) return null
   if (!nodeId) return `Added claim ${claimId} ${quote(text)}.`
@@ -214,7 +216,7 @@ export async function runMenuAction(menu: EditorMenu, action: MenuAction): Promi
       id = await adoptAt(steps, file, menu.lineStart)
       if (!id) return null
     }
-    const done = action === 'message' ? await setMessage(steps, id, text) : await liftToClaim(steps, id, text)
+    const done = action === 'message' ? await setMessage(steps, id, text) : await liftToClaim(steps, id, text, file)
     if (done && !nodeId) return `Adopted the paragraph as ${id}. ${done}`
     return done
   })

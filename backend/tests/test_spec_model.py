@@ -157,10 +157,16 @@ BREAKERS: list[tuple[str, Breaker, str, str]] = [
         "does not link",
     ),
     (
-        "claim anchor",
-        lambda s: setattr(s.claims[0], "anchor", Anchor(file="a.tex", marker="@p c1")),
-        "claims[0].anchor",
-        "no anchor",
+        "claim anchor: empty sentence",
+        lambda s: setattr(s.claims[0], "anchor", Anchor(file="a.tex", marker="   ")),
+        "claims[0].anchor.marker",
+        "empty",
+    ),
+    (
+        "claim anchor: not one sentence",
+        lambda s: setattr(s.claims[0], "anchor", Anchor(file="a.tex", marker="x" * 401)),
+        "claims[0].anchor.marker",
+        "one sentence",
     ),
     (
         "message anchor",

@@ -474,7 +474,8 @@ test('Selection menu: lift to claim, set as message, set as argument, and Undo f
 
   await expect(page.getByTestId('spec-toast')).toContainText('Lifted to claim c1 and linked it to p-1')
   expect(await ops(request)).toEqual([
-    { type: 'add_claim', says: FIRST_SENTENCE },
+    // The selection is the sentence that states the claim, so the claim is anchored to it.
+    { type: 'add_claim', says: FIRST_SENTENCE, anchor: { file: INTRO_FILE, marker: FIRST_SENTENCE } },
     { type: 'link_claim', id: 'p-1', claim_id: 'c1' },
   ])
   await page.getByTestId('tab-spec').click()

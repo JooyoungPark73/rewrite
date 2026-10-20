@@ -288,6 +288,14 @@ export interface NodeStatus {
   file: string | null
   /** 1-based line of the marker or heading (null when planned or not found). */
   line: number | null
+  /**
+   * Why this node should be re-read after a spec change above it ("the promise of
+   * intro-1 changed", "claim c2 changed", "the message changed"), or null. Cleared by
+   * Reconcile or by editing the node. Claims have a status too: planned (no anchor),
+   * linked (its sentence is in the file), stale (reworded or gone), orphaned (file not
+   * in the include tree).
+   */
+  reread: string | null
 }
 
 /** GET /api/spec/status */
@@ -366,7 +374,7 @@ export type SpecOp =
   | { type: 'link_claim'; id: string; claim_id: string }
   | { type: 'unlink_claim'; id: string; claim_id: string }
   /** New claim; the answer carries `new_id`. */
-  | { type: 'add_claim'; says: string; fields?: Record<string, string> }
+  | { type: 'add_claim'; says: string; fields?: Record<string, string>; anchor?: Anchor | null }
   | { type: 'update_claim'; id: string; says?: string; fields?: Record<string, string>; notes?: string }
   /** Remove a claim and every reference to it. */
   | { type: 'delete_claim'; id: string }

@@ -353,3 +353,17 @@ Not verified:
   configured style with no file is a PromptError at run time, never a silent drop.
 - Eleven styles drafted from Alan Synn's "Same Computer Science, Different Senses of Reality".
   Tests: `tests/test_styles.py` (7); Settings dropdown e2e in `synctex.spec.ts`.
+
+### 2026-10-19 — concurrency and streaming, checked against the real CLIs
+
+- Runs do not block each other: with a codex run in progress, `GET /api/health` answered in
+  40 ms and a claude run of another pass started in 20 ms; both were `running` together. The
+  only refusal is the phase-4 rule, one active run per pass+scope (409 "already active").
+- Streaming: claude's `--include-partial-messages` delivers `text_delta` / `input_json_delta`
+  from ~1 s in (71 deltas over a 3.8 s haiku answer), and the live panel shows them. codex
+  does not stream: `codex exec --json` emits `thread.started`, `turn.started`, then nothing
+  for the whole generation (21 s on a 250-word answer) until `item.completed agent_message`;
+  plain `codex exec` likewise prints the answer whole at the end. Partial output would need
+  the codex app-server protocol (PLAN.md: SDKs only if event parsing becomes a burden), so
+  the live panel now shows the elapsed seconds and, for codex, says that no partial output
+  exists, instead of pretending to stream.

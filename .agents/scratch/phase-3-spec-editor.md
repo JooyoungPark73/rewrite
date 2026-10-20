@@ -288,3 +288,29 @@ Not verified / open:
   "Argument" (`spec/tree.ts` `FIELD_LABELS`); the editor context menu's "Set as thesis" is "Set
   as argument" and its toast says "Argument set". The paper.json keys and the prompts are
   unchanged.
+
+### 2026-10-19 — design: claim anchors and "re-read" marks (downward propagation)
+
+Decided with the author (plan-level extension, recorded here rather than in PLAN.md):
+
+- **Claims get an optional anchor** `{file, marker}` where `marker` is the sentence that
+  states the claim (whitespace-collapsed, ≤ 400 chars), set by "Lift to claim" (the selected
+  sentence) or `set_anchor`. Claim status: `planned` (no anchor), `linked` (the sentence is
+  found in the file, whitespace-collapsed; `line` = where), `stale` (file in the include tree
+  but the sentence is gone or reworded), `orphaned` (file not in the include tree). No
+  baseline: an exact-quote anchor needs none. PLAN.md's "claims anchor: none" becomes
+  "optional sentence anchor"; the flat bank and id references are unchanged.
+- **Re-read marks** are the missing downward half of the loop. `state.db` table `reread
+  (node_id, reason, since)`; `write_spec` diffs the previous spec against the new one and,
+  for every node whose `says` or `fields` changed: message → every section is marked
+  ("the message changed"); section → its paragraphs ("the promise of <id> changed"); claim →
+  every section and paragraph linking it ("claim <id> changed"). A node whose own `says` or
+  `fields` changed in that write has its mark cleared (the author revised it). Links,
+  moves, notes and anchors do not mark. Marks clear on `reconcile` (one "I checked" action
+  for stale text and re-read alike, now accepted for claims and sections too) and when the
+  node is edited. `GET /api/spec/status` returns `reread: str | null` per node and now
+  covers claims.
+- UI: a ring on the status dot plus the reason in its tooltip; "N to re-read" in the
+  outliner header; claim cards get the dot and a clickable location chip; ⋯ → Reconcile
+  appears for stale and re-read rows. The `claims-evidence` pass remains the check that the
+  text argues the claim; the marks only say what to re-read after a spec change.

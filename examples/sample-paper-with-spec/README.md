@@ -40,7 +40,11 @@ Every node has the same shape: `id`, `level`, `says`, `fields`, `claims`, `child
 2. **Message first.** Fill the takeaway (`says`), Problem, Why it matters and Argument. If you cannot write these in
    four sentences, the paper is not ready to be reviewed against them; that is useful to know.
 3. **Claims next.** List what the paper asserts, one sentence each, and for each write where the
-   evidence is and what the claim's scope is. Writing `evidence` is where gaps show: claim `c2`
+   evidence is and what the claim's scope is. Anchor each claim to the sentence that states it
+   (select the sentence in the editor, right-click, "Lift to claim"; here every claim is anchored:
+   c1 and c2 to the two observations in the introduction, c3 and c4 to the sentences in the
+   evaluation that carry the numbers, c5 to the safety sentence in the design). The card then
+   says where the claim is stated, and turns stale when that sentence is reworded. Writing `evidence` is where gaps show: claim `c2`
    ("the working set is small relative to the snapshot") turned out to have no measurement
    behind it, so its `evidence` says so and `notes` holds the TODO. The `claims-evidence` pass
    will flag exactly this.
@@ -65,6 +69,16 @@ The status dot on each row tells you how the spec and the text relate: **linked*
 is in place and the prose has not changed since you last looked), **stale** (the prose under the
 marker changed; re-read it, then edit `says` or press Reconcile), **orphaned** (the marker is
 gone), **planned** (no anchor yet; a paragraph you intend to write).
+
+Claims have a dot too. "Lift to claim" anchors the new claim to the sentence you selected, so
+the card says where the claim is stated (click to open it) and turns **stale** when that
+sentence is reworded or deleted; Unlink forgets the anchor.
+
+The loop also runs downward. Edit a claim's statement, evidence or scope, and every section and
+paragraph that links it gets a ring on its dot: **re-read** it, because it was written against
+the old claim. A changed section promise rings its paragraphs; a changed message rings the
+sections. The header counts them ("3 to re-read"); editing a ringed node's `says` or choosing
+⋯ → Reconcile ("I re-read it") clears the ring. Links, notes and moves ring nothing.
 
 ## Using it with the review passes
 

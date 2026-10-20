@@ -187,6 +187,9 @@ def paragraph_marker_id(node: Node) -> str | None:
 PARAGRAPH_MARKER_RE = re.compile(r"^@p (?P<id>\S+)$")
 
 
+CLAIM_ANCHOR_MAX = 400  # a claim's anchor is one sentence
+
+
 def _anchor_file_error(file: str) -> str | None:
     if not file.strip():
         return "anchor.file is empty"
@@ -226,14 +229,23 @@ def _validate_node(node: Node, path: str, errors: list[SpecError]) -> None:
     anchor = node.anchor
     if anchor is None:
         return
-    if node.level in ("message", "claim"):
-        err(".anchor", f"a {node.level} node has no anchor; use null")
+    if node.level == "message":
+        err(".anchor", "a message node has no anchor; use null")
         return
     file_error = _anchor_file_error(anchor.file)
     if file_error:
         err(".anchor.file", file_error)
     marker = anchor.marker
-    if node.level == "paragraph":
+    if node.level == "claim":
+        # A claim's anchor is the sentence that states it (found by whitespace-collapsed match).
+        if not marker.strip():
+            err(".anchor.marker", "a claim anchor is the sentence that states it; it is empty")
+        elif len(marker) > CLAIM_ANCHOR_MAX:
+            err(
+                ".anchor.marker",
+                f"a claim anchor is one sentence (at most {CLAIM_ANCHOR_MAX} characters)",
+            )
+    elif node.level == "paragraph":
         if marker != skeleton.paragraph_marker(node.id):
             err(
                 ".anchor.marker",
@@ -490,6 +502,7 @@ def write_spec(
         atomic_write_text(repo.paper_json_path, text)
     try:
         rebaseline_changed(repo, previous, spec, force)
+        propagate_rereads(repo, previous, spec)
         with db.connect(repo) as conn:
             db.record_ids(conn, all_ids(spec))
     except Exception:  # the spec is written; a state.db hiccup only affects stale dots
@@ -541,6 +554,68 @@ def rebaseline_changed(
             else:
                 db.set_baseline(conn, node.id, skeleton.marker_hash(scan, marker))
     return [node.id for node in changed]
+
+
+# --------------------------------------------------------------------------- re-read marks
+
+
+def _content(node: Node) -> tuple[str, tuple[tuple[str, str], ...]]:
+    """What a dependent node is written against: says and fields (not links, notes, anchors)."""
+    return node.says, tuple(sorted(node.fields.items()))
+
+
+def _all_nodes(spec: PaperSpec | None) -> dict[str, Node]:
+    if spec is None:
+        return {}
+    nodes = {spec.message.id: spec.message}
+    nodes.update({c.id: c for c in spec.claims})
+    nodes.update({n.id: n for n, _, _ in iter_tree(spec)})
+    return nodes
+
+
+def reread_marks(previous: PaperSpec | None, spec: PaperSpec) -> tuple[dict[str, str], set[str]]:
+    """(marks, cleared): nodes to mark for re-reading after `previous` became `spec`, with a
+    reason, and nodes whose own says/fields changed (their mark, if any, is cleared).
+
+    A changed message marks every section; a changed section marks its paragraphs; a changed
+    claim marks every section and paragraph that links it. Links, moves, notes and anchors
+    change nothing. A node revised in this write is never marked by the same write."""
+    before = _all_nodes(previous)
+    marks: dict[str, str] = {}
+    cleared: set[str] = set()
+    if not before:
+        return marks, cleared
+    after = _all_nodes(spec)
+    for node_id, node in after.items():
+        prev = before.get(node_id)
+        if prev is None or _content(prev) == _content(node):
+            continue
+        cleared.add(node_id)
+        if node.level == "message":
+            for section in spec.tree.children:
+                marks[section.id] = "the message changed"
+        elif node.level == "section":
+            for paragraph in node.children:
+                marks[paragraph.id] = f"the promise of {node.id} changed"
+        elif node.level == "claim":
+            for tree_node, _, _ in iter_tree(spec):
+                if node_id in tree_node.claims:
+                    marks[tree_node.id] = f"claim {node_id} changed"
+    for node_id in cleared:
+        marks.pop(node_id, None)
+    return marks, cleared
+
+
+def propagate_rereads(repo: Repo, previous: PaperSpec | None, spec: PaperSpec) -> dict[str, str]:
+    """Record the re-read marks of this write in state.db; returns the marks set."""
+    marks, cleared = reread_marks(previous, spec)
+    with db.connect(repo) as conn, db.transaction(conn):
+        for node_id in cleared:
+            db.clear_reread(conn, node_id)
+        for node_id, reason in marks.items():
+            db.set_reread(conn, node_id, reason)
+        db.prune_rereads(conn, set(_all_nodes(spec)))
+    return marks
 
 
 # --------------------------------------------------------------------------- ids
@@ -642,6 +717,8 @@ class AddClaimOp(_OpBase):
     type: Literal["add_claim"]
     says: str = ""
     fields: dict[str, str] | None = None
+    # The sentence that states the claim ("Lift to claim" passes the selection).
+    anchor: Anchor | None = None
 
 
 class UpdateClaimOp(_OpBase):
@@ -844,6 +921,7 @@ def apply_op(
         new_id = new_claim_id(spec, reserved)
         claim = Node(id=new_id, level="claim", says=op.says, fields=empty_fields("claim"))
         _merge_fields(claim, op.fields)
+        claim.anchor = op.anchor
         spec.claims.append(claim)
 
     elif isinstance(op, UpdateClaimOp):
@@ -861,8 +939,12 @@ def apply_op(
             node.claims = [c for c in node.claims if c != op.id]
 
     elif isinstance(op, SetAnchorOp):
-        node, _ = _tree_node(spec, op.id, "anchor")
-        node.anchor = op.anchor
+        claim = find_claim(spec, op.id)
+        if claim is not None:
+            claim.anchor = op.anchor
+        else:
+            node, _ = _tree_node(spec, op.id, "anchor")
+            node.anchor = op.anchor
 
     else:  # pragma: no cover - the discriminated union admits nothing else
         raise InvalidOpError(f"unknown op {op!r}")

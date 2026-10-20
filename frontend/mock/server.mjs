@@ -155,12 +155,13 @@ function freshRepoData(files = INITIAL_FILES, specRaw = specApi.serialize(specAp
     mtimes: Object.fromEntries(Object.keys(files).map((p) => [p, 1_700_000_000])),
     specRaw,
     baselines: {},
+    rereads: {},
   }
 }
 
 /** Take the open repo's data off `state` (see "Several repos" above). */
 function takeRepoData() {
-  return { files: state.files, mtimes: state.mtimes, specRaw: state.specRaw, baselines: state.baselines }
+  return { files: state.files, mtimes: state.mtimes, specRaw: state.specRaw, baselines: state.baselines, rereads: state.rereads }
 }
 
 /** Make `path` the open repo, parking the previous repo's data. */
@@ -238,6 +239,7 @@ function writeSpec(next, previous, forceBaseline = []) {
   const errors = specApi.validate(next)
   if (errors.length) throw new specApi.SpecApiError(422, 'The spec is invalid', errors)
   specApi.rebaseline(previous, next, state.files, state.baselines, forceBaseline)
+  specApi.propagateRereads(previous, next, state.rereads)
   const raw = specApi.serialize(next)
   if (raw !== state.specRaw) {
     state.specRaw = raw
@@ -416,7 +418,7 @@ const groupsApi = createGroupsApi({
   linkedSections: () => {
     const { spec } = readSpec()
     if (!spec) return []
-    const status = specApi.computeStatus(spec, state.files, state.baselines)
+    const status = specApi.computeStatus(spec, state.files, state.baselines, state.rereads)
     return spec.tree.children.filter((n) => n.anchor && status[n.id]?.status === 'linked')
   },
   fileOrder: () => Object.keys(state.files),
@@ -480,6 +482,7 @@ async function handle(req, res) {
     const body = await readBody(req)
     state.specRaw = typeof body?.raw === 'string' ? body.raw : state.specRaw
     state.baselines = {}
+    state.rereads = {}
     if (!body?.silent) broadcast({ type: 'spec.changed' })
     return sendJson(res, 200, { ok: true })
   }
@@ -752,7 +755,7 @@ async function handleSpec(req, res, url) {
 
   if (route === 'GET /api/spec/status') {
     const { spec } = readSpec()
-    return sendJson(res, 200, { nodes: spec ? specApi.computeStatus(spec, state.files, state.baselines) : {} })
+    return sendJson(res, 200, { nodes: spec ? specApi.computeStatus(spec, state.files, state.baselines, state.rereads) : {} })
   }
 
   if (route === 'GET /api/spec/coverage') {
@@ -809,7 +812,7 @@ async function handleSpec(req, res, url) {
   const reconcile = /^\/api\/spec\/nodes\/([^/]+)\/reconcile$/.exec(url.pathname)
   if (req.method === 'POST' && reconcile) {
     const id = decodeURIComponent(reconcile[1])
-    const status = specApi.reconcile(currentSpec(), state.files, state.baselines, id)
+    const status = specApi.reconcile(currentSpec(), state.files, state.baselines, id, state.rereads)
     return sendJson(res, 200, { id, ...status })
   }
 

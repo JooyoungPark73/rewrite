@@ -84,6 +84,7 @@ export default function SpecView({ active }: { active: boolean }) {
           </button>
         </div>
         <div className="ml-auto flex items-center gap-1">
+          <RereadBadge />
           {writing > 0 && (
             <span className="loading loading-xs loading-spinner text-base-content/40" title="Saving paper.json…" />
           )}
@@ -155,5 +156,26 @@ export function SpecToast() {
         </button>
       </div>
     </div>
+  )
+}
+
+
+/** "N to re-read": nodes marked after a change above them (NodeStatus.reread). */
+function RereadBadge() {
+  // Select the status map itself (a stable reference between refreshes) and derive from it;
+  // a selector that builds a new array each call would re-render on every store change.
+  const status = useSpecStore((s) => s.status)
+  const marked = Object.entries(status)
+    .filter(([, st]) => st.reread)
+    .map(([id, st]) => `${id}: ${st.reread}`)
+  if (marked.length === 0) return null
+  return (
+    <span
+      className="badge badge-sm badge-info badge-soft"
+      title={`Re-read after a spec change:\n${marked.join('\n')}\nThe ringed dots show them; ⋯ → Reconcile clears one.`}
+      data-testid="reread-badge"
+    >
+      {marked.length} to re-read
+    </span>
   )
 }

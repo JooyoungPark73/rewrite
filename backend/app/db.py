@@ -214,6 +214,16 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
     # 6 (audit 2026-10-18 item 7): instruction files outside the sandbox the run's CLI
     # could read (app/runner/context.py), as a warning; NULL when none.
     ("ALTER TABLE runs ADD COLUMN context_warning TEXT",),
+    # 6: re-read marks (phase 3 extension, 2026-10-19): nodes to re-read after a spec change.
+    (
+        """
+        CREATE TABLE reread (
+            node_id TEXT PRIMARY KEY,
+            reason  TEXT NOT NULL,
+            since   REAL NOT NULL
+        )
+        """,
+    ),
 )
 
 
@@ -318,3 +328,30 @@ def record_ids(conn: sqlite3.Connection, ids: Iterable[str]) -> None:
 
 def recorded_ids(conn: sqlite3.Connection) -> set[str]:
     return {str(row[0]) for row in conn.execute("SELECT id FROM spec_ids")}
+
+
+# --------------------------------------------------------------------------- reread
+
+
+def get_rereads(conn: sqlite3.Connection) -> dict[str, str]:
+    """Every node marked for re-reading, id -> reason."""
+    return {str(r[0]): str(r[1]) for r in conn.execute("SELECT node_id, reason FROM reread")}
+
+
+def set_reread(conn: sqlite3.Connection, node_id: str, reason: str) -> None:
+    conn.execute(
+        "INSERT INTO reread (node_id, reason, since) VALUES (?, ?, ?) "
+        "ON CONFLICT(node_id) DO UPDATE SET reason = excluded.reason, since = excluded.since",
+        (node_id, reason, time.time()),
+    )
+
+
+def clear_reread(conn: sqlite3.Connection, node_id: str) -> None:
+    conn.execute("DELETE FROM reread WHERE node_id = ?", (node_id,))
+
+
+def prune_rereads(conn: sqlite3.Connection, keep: set[str]) -> None:
+    """Drop marks of nodes that no longer exist."""
+    for node_id in [str(r[0]) for r in conn.execute("SELECT node_id FROM reread")]:
+        if node_id not in keep:
+            conn.execute("DELETE FROM reread WHERE node_id = ?", (node_id,))

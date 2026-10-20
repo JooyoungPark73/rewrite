@@ -297,7 +297,24 @@ const DOT_CLASS: Record<NodeStatus['status'], string> = {
 
 /** Tooltip text: the state and where the anchor is. */
 function dotTitle(node: SpecNode, st: NodeStatus | undefined): string {
+  const base = anchorTitle(node, st)
+  return st?.reread ? `${base}\nRe-read: ${st.reread}. Edit "says" or ⋯ → Reconcile once checked.` : base
+}
+
+function anchorTitle(node: SpecNode, st: NodeStatus | undefined): string {
   const where = st?.file ? `${st.file}${st.line ? `:${st.line}` : ''}` : ''
+  if (node.level === 'claim') {
+    switch (st?.status) {
+      case 'linked':
+        return `stated at ${where}. Click to open it in the editor.`
+      case 'stale':
+        return `the sentence stating this claim is gone or reworded in ${where}; re-check the claim, then re-anchor or unlink it`
+      case 'orphaned':
+        return `${node.anchor?.file ?? 'its file'} is not in the include tree`
+      default:
+        return 'no sentence anchored: "Lift to claim" on the sentence that states it'
+    }
+  }
   switch (st?.status) {
     case 'linked':
       return `linked — ${where}. Click to open it in the editor.`
@@ -312,7 +329,7 @@ function dotTitle(node: SpecNode, st: NodeStatus | undefined): string {
   }
 }
 
-function StatusDot({ node }: { node: SpecNode }) {
+export function StatusDot({ node }: { node: SpecNode }) {
   const st = useSpecStore((s) => s.status[node.id])
   const kind = st?.status ?? (node.anchor ? null : 'planned')
   const clickable = kind === 'linked' || kind === 'stale' || kind === 'orphaned'
@@ -330,8 +347,14 @@ function StatusDot({ node }: { node: SpecNode }) {
       aria-label={dotTitle(node, st)}
       data-testid="status-dot"
       data-status={kind ?? 'unknown'}
+      data-reread={st?.reread ? 'true' : undefined}
     >
-      <span className={`block h-2.5 w-2.5 rounded-full ${kind ? DOT_CLASS[kind] : 'bg-base-300'}`} />
+      {/* A ring marks a node to re-read after a change above it (see NodeStatus.reread). */}
+      <span
+        className={`block h-2.5 w-2.5 rounded-full ${kind ? DOT_CLASS[kind] : 'bg-base-300'} ${
+          st?.reread ? 'ring-2 ring-info ring-offset-1 ring-offset-base-100' : ''
+        }`}
+      />
     </button>
   )
 }
@@ -415,6 +438,7 @@ function RowMenu({ node }: { node: SpecNode }) {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
   const status = useSpecStore((s) => s.status[node.id]?.status)
+  const reread = useSpecStore((s) => s.status[node.id]?.reread ?? null)
   const markerWithSays = useSpecStore((s) => s.markerWithSays)
 
   // Close when clicking anywhere else, or on Escape.
@@ -542,11 +566,17 @@ function RowMenu({ node }: { node: SpecNode }) {
               </button>
             </li>
           )}
-          {status === 'stale' && (
+          {(status === 'stale' || reread) && (
             <li>
               <button type="button" role="menuitem" onClick={reconcile} data-testid="menu-reconcile">
                 Reconcile
-                <span className="text-xs text-base-content/50">the prose is right; clear “stale”</span>
+                <span className="text-xs text-base-content/50">
+                  {status === 'stale' && reread
+                    ? `the prose is right and I re-read it (${reread})`
+                    : status === 'stale'
+                      ? 'the prose is right; clear “stale”'
+                      : `I re-read it (${reread})`}
+                </span>
               </button>
             </li>
           )}

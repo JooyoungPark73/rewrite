@@ -22,7 +22,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from app import db, skeleton
-from app.files import normalize_rel
+from app.files import normalize_rel, strip_tex_comment
 from app.repo import Repo
 from app.skeleton import DocScan, Heading, Paragraph
 from app.spec import (
@@ -48,6 +48,9 @@ class NodeStatus(BaseModel):
     status: StatusValue
     file: str | None  # where the anchor resolves (the anchor's file when orphaned)
     line: int | None  # 1-based: the heading line, or the paragraph's marker line
+    # Why this node should be re-read after a spec change above it (see spec.reread_marks),
+    # or null. Cleared by reconcile or by editing the node.
+    reread: str | None = None
 
 
 # --------------------------------------------------------------------------- resolution
@@ -66,7 +69,49 @@ def resolve(node: Node, scan: DocScan) -> tuple[str, int] | None:
     return (marker.file, marker.line) if marker else None
 
 
+def _find_sentence(scan: DocScan, file: str, sentence: str) -> int | None:
+    """1-based line where the whitespace-collapsed `sentence` starts in `file`, or None.
+    Comments are ignored; the match may span lines."""
+    lines = scan.lines.get(file)
+    if lines is None:
+        return None
+    needle = skeleton.collapse(sentence)
+    if not needle:
+        return None
+    pieces: list[tuple[int, str]] = []
+    for lineno, raw in enumerate(lines, start=1):
+        text = skeleton.collapse(strip_tex_comment(raw))
+        if text:
+            pieces.append((lineno, text))
+    joined = " ".join(text for _, text in pieces)
+    at = joined.find(needle)
+    if at < 0:
+        return None
+    offset = 0
+    for lineno, text in pieces:
+        if offset + len(text) >= at:
+            return lineno
+        offset += len(text) + 1
+    return pieces[-1][0] if pieces else None
+
+
+def claim_status(node: Node, scan: DocScan) -> NodeStatus:
+    """A claim: planned without an anchor; linked when its sentence is in the file; stale
+    when the file is in the include tree but the sentence is gone or reworded; orphaned when
+    the file is not in the include tree."""
+    if node.anchor is None:
+        return NodeStatus(status="planned", file=None, line=None)
+    if node.anchor.file not in scan.lines:
+        return NodeStatus(status="orphaned", file=node.anchor.file, line=None)
+    line = _find_sentence(scan, node.anchor.file, node.anchor.marker)
+    if line is None:
+        return NodeStatus(status="stale", file=node.anchor.file, line=None)
+    return NodeStatus(status="linked", file=node.anchor.file, line=line)
+
+
 def node_status(node: Node, scan: DocScan, conn: sqlite3.Connection) -> NodeStatus:
+    if node.level == "claim":
+        return claim_status(node, scan)
     if node.anchor is None:
         return NodeStatus(status="planned", file=None, line=None)
     where = resolve(node, scan)
@@ -86,24 +131,32 @@ def node_status(node: Node, scan: DocScan, conn: sqlite3.Connection) -> NodeStat
 
 
 def compute_status(repo: Repo, spec: PaperSpec, scan: DocScan) -> dict[str, NodeStatus]:
-    """Status of every section and paragraph node, keyed by id."""
+    """Status of every section, paragraph and claim node, keyed by id, with its re-read mark."""
     with db.connect(repo) as conn:
-        return {node.id: node_status(node, scan, conn) for node, _, _ in iter_tree(spec)}
+        out = {node.id: node_status(node, scan, conn) for node, _, _ in iter_tree(spec)}
+        out.update({claim.id: claim_status(claim, scan) for claim in spec.claims})
+        for node_id, reason in db.get_rereads(conn).items():
+            if node_id in out:
+                out[node_id].reread = reason
+        return out
 
 
 def reconcile(repo: Repo, spec: PaperSpec, scan: DocScan, node_id: str) -> NodeStatus:
-    """Accept the current prose: reset the node's baseline to the current paragraph text."""
+    """ "I checked": for a paragraph, accept the current prose (reset its baseline); for every
+    section, paragraph or claim, clear its re-read mark."""
     found = find_tree_node(spec, node_id)
-    if found is None:
-        if node_id == spec.message.id or any(c.id == node_id for c in spec.claims):
-            raise InvalidOpError("only section and paragraph nodes have a status")
+    claim = next((c for c in spec.claims if c.id == node_id), None)
+    if found is None and claim is None:
+        if node_id == spec.message.id:
+            raise InvalidOpError("the message has no status to reconcile")
         raise NotFoundError(f"unknown id {node_id!r}")
-    node = found[0]
-    with db.connect(repo) as conn:
+    node = claim if claim is not None else found[0]  # type: ignore[index]
+    with db.connect(repo) as conn, db.transaction(conn):
         if node.level == "paragraph" and node.anchor is not None:
             marker = skeleton.find_marker(scan, paragraph_marker_id(node) or "", node.anchor.file)
             if marker is not None:
                 db.set_baseline(conn, node.id, skeleton.marker_hash(scan, marker))
+        db.clear_reread(conn, node.id)
         return node_status(node, scan, conn)
 
 

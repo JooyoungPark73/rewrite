@@ -690,3 +690,79 @@ test('claim card: "+ notes" reveals a focused notes box; a saved note keeps the 
   await openSpecTab(page)
   await expect(card.getByTestId('claim-notes')).toHaveValue('Needs a number.')
 })
+
+// ---------------------------------------------------------------------------
+// Claim anchors and re-read marks
+// ---------------------------------------------------------------------------
+
+test('claims: an anchored claim shows where it is stated, turns stale when the sentence is reworded, Unlink clears it', async ({ page, request }) => {
+  const sentence = 'Mock papers are useful for testing user interfaces.'
+  await seedSpec(
+    request,
+    paperSpec(
+      [node('intro-1', 'section', 'Intro', { anchor: INTRO_ANCHOR })],
+      [node('c1', 'claim', 'Mock papers are useful', { anchor: { file: 'sections/intro.tex', marker: sentence } })],
+    ),
+  )
+  await openSpecTab(page)
+  const card = page.locator('[data-testid="claim-card"][data-claim-id="c1"]')
+  await expect(card.getByTestId('status-dot')).toHaveAttribute('data-status', 'linked')
+  await expect(card.getByTestId('claim-anchor')).toHaveAttribute('data-status', 'linked')
+  await expect(card.getByTestId('claim-anchor-open')).toContainText('intro.tex:2')
+  // Clicking the chip opens the file at the sentence.
+  await card.getByTestId('claim-anchor-open').click()
+  await expect(page.getByTestId('open-file-name')).toHaveText('sections/intro.tex')
+  await expect(page.locator('.cm-activeLineGutter').first()).toHaveText('2')
+  // Reword the sentence on disk: the claim is stale; Unlink makes it planned.
+  const file = await (await request.get(`${MOCK_URL}/api/file?path=sections/intro.tex`)).json()
+  await request.put(`${MOCK_URL}/api/file`, { data: { path: 'sections/intro.tex', content: file.content.replace(sentence, 'Mock papers help when testing user interfaces.') } })
+  await page.getByTestId('tab-spec').click()
+  await expect(card.getByTestId('status-dot')).toHaveAttribute('data-status', 'stale')
+  await expect(card.getByTestId('claim-anchor')).toContainText('sentence not found')
+  await card.getByTestId('claim-anchor-unlink').click()
+  await expect(card.getByTestId('status-dot')).toHaveAttribute('data-status', 'planned')
+  await expect(card.getByTestId('claim-anchor')).toHaveCount(0)
+})
+
+test('re-read marks: a changed claim rings the rows that argue it; Reconcile and editing clear them', async ({ page, request }) => {
+  await seedSpec(
+    request,
+    paperSpec(
+      [
+        node('intro-1', 'section', 'Intro', {
+          claims: ['c1'],
+          children: [node('p-1', 'paragraph', 'Argues the claim', { claims: ['c1'] }), node('p-2', 'paragraph', 'Does not')],
+        }),
+      ],
+      [node('c1', 'claim', 'A claim')],
+    ),
+  )
+  await openSpecTab(page)
+  await expect(page.getByTestId('reread-badge')).toHaveCount(0)
+  // Narrow the claim's scope in the claim bank.
+  const scope = page.locator('[data-testid="claim-card"][data-claim-id="c1"]').getByTestId('claim-field-scope')
+  await scope.fill('Only on one trace')
+  await scope.blur()
+  await expect(page.getByTestId('reread-badge')).toHaveText('2 to re-read')
+  await expect(dot(page, 'p-1')).toHaveAttribute('data-reread', 'true')
+  await expect(dot(page, 'intro-1')).toHaveAttribute('data-reread', 'true')
+  await expect(dot(page, 'p-2')).not.toHaveAttribute('data-reread', 'true')
+  await expect(dot(page, 'p-1')).toHaveAttribute('aria-label', /Re-read: claim c1 changed/)
+  // Editing the paragraph's says clears its mark.
+  await saysInput(page, 'p-1').fill('Argues the narrowed claim')
+  await saysInput(page, 'p-1').blur()
+  await expect(dot(page, 'p-1')).not.toHaveAttribute('data-reread', 'true')
+  await expect(page.getByTestId('reread-badge')).toHaveText('1 to re-read')
+  // ⋯ → Reconcile clears the section's mark.
+  await row(page, 'intro-1').getByTestId('row-menu-button').click()
+  await expect(page.getByTestId('menu-reconcile')).toContainText('I re-read it')
+  await page.getByTestId('menu-reconcile').click()
+  await expect(dot(page, 'intro-1')).not.toHaveAttribute('data-reread', 'true')
+  await expect(page.getByTestId('reread-badge')).toHaveCount(0)
+  // A changed section promise marks its paragraphs.
+  await saysInput(page, 'intro-1').fill('A new promise')
+  await saysInput(page, 'intro-1').blur()
+  await expect(dot(page, 'p-1')).toHaveAttribute('data-reread', 'true')
+  await expect(dot(page, 'p-2')).toHaveAttribute('data-reread', 'true')
+  await expect(page.getByTestId('reread-badge')).toHaveText('2 to re-read')
+})

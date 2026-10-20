@@ -72,10 +72,13 @@ own venue and it appears in the dropdown.
    `clarity` and `epistemic-calibration` for later: sentence findings on text you will rewrite
    are wasted. A run costs a few cents and about ten seconds with the cheap model.
 4. **Reconcile, don't patch.** A finding says the text and a node disagree; decide which side
-   is wrong. Text wrong: edit the `.tex`. Spec wrong: edit the node, then look below it, since a
-   changed section promise usually invalidates a paragraph's `function` and a changed thesis
-   touches the conclusion. Status dots turn stale where the prose changed under a node, so you
-   know what to re-read.
+   is wrong. Text wrong: edit the `.tex`. Spec wrong: edit the node, and the app rings every
+   node written against it: a changed claim rings the sections and paragraphs that link it, a
+   changed section promise rings its paragraphs, a changed message rings the sections. The
+   header counts them ("3 to re-read"); re-read each, edit its `says` or press ⋯ → Reconcile.
+   Status dots turn stale the other way round, where the prose changed under a node. Claims
+   carry a dot too: "Lift to claim" anchors a claim to its sentence, and the claim turns stale
+   when that sentence is reworded.
 5. **Snapshot before big changes.** "Flag major revision" in the git panel tags the state.
    After rewriting a paragraph, the blind A/B compare sends old and new to a fresh call with
    only the spec's local message; the verdict does not know which is the edit, so it checks
