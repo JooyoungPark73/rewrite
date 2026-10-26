@@ -57,7 +57,7 @@ Every node has the same shape: `id`, `level`, `says`, `fields`, `claims`, `child
    at the `\label` line, and an unknown label is flagged.
 5. **Paragraphs.** For each paragraph, `says` (its message) and `function` (its job). A paragraph
    whose job you cannot name is a paragraph the `paragraph-function` pass will question; here
-   `p-8` ("Point to Figure 1") is flagged in its own `function` as foldable.
+   `p-8` ("Point to fig:pipeline") is flagged in its own `function` as foldable.
 6. **Link claims.** Drag a claim card from the bank onto a section or paragraph row, or click a
    cell of the **Coverage** matrix (right of the outliner) to link a claim to a section; the × on
    a chip unlinks. The matrix then shows where each claim is argued; an unreferenced claim or a
