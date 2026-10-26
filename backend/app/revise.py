@@ -30,8 +30,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app import db, findings, prompts, runstore, skeleton
 from app.config import ConfigError
+from app.drafts import DraftAnswer, parse_fenced
 from app.events import EventBus, FindingsUpdated, RevisionFinished, RunFinished
 from app.files import (
+    NotTextError,
+    PathError,
+    TooLargeError,
     normalize_rel,
     read_text_file,
     resolve_tex_tree,
@@ -106,6 +110,24 @@ def _level_of(repo: Repo, json_ref: str | None) -> str:
     return "sentence"
 
 
+def _read(repo: Repo, file: str) -> str:
+    """A source file's text; ReviseError (404 / 400) instead of the file API's exceptions."""
+    try:
+        text, _ = read_text_file(repo.root, file)
+    except FileNotFoundError as exc:
+        raise ReviseError(404, f"file not found: {file}") from exc
+    except (PathError, NotTextError, TooLargeError, IsADirectoryError) as exc:
+        raise ReviseError(400, f"cannot use {file}: {exc}") from exc
+    return text
+
+
+def _write(repo: Repo, file: str, text: str) -> None:
+    try:
+        write_text_file(repo.root, file, text)
+    except (PathError, TooLargeError) as exc:
+        raise ReviseError(400, f"cannot write {file}: {exc}") from exc
+
+
 def add_comment(repo: Repo, request: CommentRequest) -> findings.Finding:
     """Store an author comment as a finding of a done run (runner "author")."""
     file = normalize_rel(request.file.strip())
@@ -113,10 +135,7 @@ def add_comment(repo: Repo, request: CommentRequest) -> findings.Finding:
         raise ReviseError(400, "the comment is empty")
     if request.line_end < request.line_start:
         raise ReviseError(400, f"not a line range: {request.line_start}-{request.line_end}")
-    try:
-        text, _ = read_text_file(repo.root, file)
-    except FileNotFoundError as exc:
-        raise ReviseError(404, f"file not found: {file}") from exc
+    text = _read(repo, file)
     lines = text.split("\n")
     anchor = findings.anchor_new(request.quote, lines, request.line_start, request.line_end)
     level = _level_of(repo, request.json_ref)
@@ -242,52 +261,13 @@ class Outstanding(BaseModel):
     by_file: dict[str, int]
 
 
-@dataclass
-class RewriteAnswer:
-    text: str
-    notes: str
-
-
-_FENCE_RE = re.compile(r"```[ \t]*[A-Za-z]*[ \t]*\r?\n(.*?)\r?\n?```", re.S)
-_NOTES_RE = re.compile(r"^\s*notes?\s*:\s*(.*)$", re.I | re.S)
-_FORBIDDEN_RE = re.compile(
-    r"\\(?:section|subsection|subsubsection)\*?\s*\{|^\s*%\s*@p\s|\\begin\{document\}|\\end\{document\}",
-    re.M,
-)
+# The answer of a rewrite has the drafting format: the same parser, the same answer type.
+RewriteAnswer = DraftAnswer
 
 
 def parse_rewrite(result: RunResult) -> RunOutcome:
     """One fenced block (possibly empty: drop the span) plus an optional `Notes:` line."""
-    text = result.text or ""
-    blocks = _FENCE_RE.findall(text)
-    if not blocks:
-        # An empty block has no inner newline for the regex; accept ```latex\n``` too.
-        if re.search(r"```[ \t]*[A-Za-z]*[ \t]*\r?\n```", text):
-            blocks = [""]
-        else:
-            return RunOutcome(
-                status="failed",
-                error="could not find the rewrite: the answer has no fenced ```latex block",
-            )
-    if len(blocks) > 1:
-        return RunOutcome(
-            status="failed", error=f"the answer has {len(blocks)} fenced blocks; one was asked for"
-        )
-    draft = blocks[0].strip("\n")
-    if _FORBIDDEN_RE.search(draft):
-        return RunOutcome(
-            status="failed",
-            error=(
-                "rejected: the rewrite contains a heading, a `% @p` line or a document "
-                "environment (a span of one paragraph was asked for)"
-            ),
-        )
-    tail = text[text.rfind("```") + 3 :]
-    notes = ""
-    m = _NOTES_RE.match(tail.strip())
-    if m:
-        notes = " ".join(m.group(1).split())
-    return RunOutcome(status="done", data=RewriteAnswer(text=draft, notes=notes))
+    return parse_fenced(result, "rewrite", "a span of one paragraph", allow_empty=True)
 
 
 def new_id() -> str:
@@ -362,11 +342,7 @@ def locate_span(repo: Repo, finding: findings.Finding, span: SpanKind) -> Span:
     anchor lines, or the paragraph those lines sit in (by the `% @p` rule when the paragraph
     has a marker, else the skeleton's paragraph)."""
     file = finding.file
-    try:
-        text, _ = read_text_file(repo.root, file)
-    except FileNotFoundError as exc:
-        raise ReviseError(404, f"file not found: {file}") from exc
-    lines = text.split("\n")
+    lines = _read(repo, file).split("\n")
     if finding.anchor_state == "stale":
         raise ReviseError(
             400,
@@ -387,11 +363,40 @@ def locate_span(repo: Repo, finding: findings.Finding, span: SpanKind) -> Span:
         start, end = paragraph.line_start, paragraph.line_end
         return Span(file, start, end, None, None, _joined(lines, start, end))
     joined = _joined(lines, a, b)
-    hit = _find_collapsed(joined, finding.quote)
+    # Search the prose only: LaTeX comments blanked out (same offsets). A quote found only in
+    # a comment (typically the `% aigen-was:` line of an approved rewrite, where re-anchoring
+    # finds the old wording) must not be "rewritten" inside that comment.
+    masked = "\n".join(_mask_comment(line) for line in joined.split("\n"))
+    hit = _find_collapsed(masked, finding.quote)
+    if hit is None and _find_collapsed(joined, finding.quote) is not None:
+        raise ReviseError(400, _COMMENT_ONLY)
     if hit is None:
-        # The anchor says ok but the text moved within the lines: fall back to the lines.
+        # The quote is not literally in the lines (an unverified anchor, or a quote that only
+        # anchored after normalizing): the rewrite falls back to the whole lines. Those must be
+        # prose: a `% @p` marker in them would be overwritten (orphaning its node), and
+        # comment-only lines (e.g. a `% aigen-was:` line) would be wrapped to no effect.
+        if any(skeleton.MARKER_RE.match(line) for line in lines[a - 1 : b]):
+            raise ReviseError(
+                400,
+                f"the finding's lines {a}-{b} include a `% @p` marker line and its quote is not "
+                "in them literally; add a comment on the exact text instead",
+            )
+        if not _active(joined).strip():
+            raise ReviseError(400, _COMMENT_ONLY)
         return Span(file, a, b, None, None, joined)
     return Span(file, a, b, hit[0], hit[1], joined[hit[0] : hit[1]])
+
+
+def _mask_comment(line: str) -> str:
+    """`line` with its LaTeX comment replaced by spaces (offsets unchanged)."""
+    active = strip_tex_comment(line)
+    return active + " " * (len(line) - len(active))
+
+
+_COMMENT_ONLY = (
+    "the finding's text is only in a LaTeX comment now (e.g. the `% aigen-was:` line of an "
+    "approved rewrite); comment on the text as it reads now instead"
+)
 
 
 def _find_collapsed(haystack: str, needle: str) -> tuple[int, int] | None:
@@ -399,7 +404,8 @@ def _find_collapsed(haystack: str, needle: str) -> tuple[int, int] | None:
     want = " ".join(needle.split())
     if not want:
         return None
-    # Map every non-space run of the haystack to its offsets.
+    # The haystack with whitespace runs collapsed (leading ones dropped), and for each of its
+    # characters the offset it came from.
     positions: list[int] = []
     collapsed_chars: list[str] = []
     prev_space = True
@@ -413,14 +419,10 @@ def _find_collapsed(haystack: str, needle: str) -> tuple[int, int] | None:
             collapsed_chars.append(ch)
             positions.append(i)
             prev_space = False
-    collapsed = "".join(collapsed_chars).strip()
-    offset = len("".join(collapsed_chars)) - len("".join(collapsed_chars).lstrip())
-    at = collapsed.find(want)
+    at = "".join(collapsed_chars).find(want)
     if at < 0:
         return None
-    start = positions[at + offset]
-    end = positions[at + offset + len(want) - 1] + 1
-    return start, end
+    return positions[at], positions[at + len(want) - 1] + 1
 
 
 # --------------------------------------------------------------------------- preparing
@@ -484,10 +486,18 @@ def prepare(repo: Repo, runs: RunManager, request: RevisionRequest) -> Prepared:
 # --------------------------------------------------------------------------- applying
 
 
+def _wrap_one(paragraph: str) -> str:
+    # A `%` comment on the last line (`...end.%` is a common idiom) would comment out the
+    # closing brace and let \aigen swallow the text after it: close on a line of its own.
+    last = paragraph.rsplit("\n", 1)[-1]
+    close = "\n}" if strip_tex_comment(last) != last else "}"
+    return f"\\aigen{{{paragraph}{close}"
+
+
 def _wrap(text: str) -> str:
     """`\\aigen{...}` around each paragraph of `text` (paragraphs separated by blank lines)."""
     paragraphs = [p.strip("\n") for p in re.split(r"\n\s*\n", text.strip("\n")) if p.strip()]
-    return "\n\n".join(f"\\aigen{{{p}}}" for p in paragraphs)
+    return "\n\n".join(_wrap_one(p) for p in paragraphs)
 
 
 def _active(text: str) -> str:
@@ -495,9 +505,18 @@ def _active(text: str) -> str:
     return "\n".join(strip_tex_comment(raw) for raw in text.split("\n"))
 
 
-def ensure_preamble(repo: Repo) -> bool:
+@dataclass
+class PreambleEdit:
+    main: str
+    text: str  # main's new content
+    line: int  # 1-based: the old line number of the first line pushed down
+    count: int  # lines inserted there
+
+
+def ensure_preamble(repo: Repo, *, write: bool = True) -> PreambleEdit | None:
     """Define `\\aigen` in the main file when no file of the include tree defines it.
-    Returns True when main.tex was changed."""
+    Returns the edit (None when the macro is already defined); with `write=False` it only
+    checks that the macro can be added (ReviseError otherwise) and writes nothing."""
     try:
         tree = resolve_tex_tree(repo.root, repo.main)
     except ConfigError as exc:
@@ -513,7 +532,7 @@ def ensure_preamble(repo: Repo) -> bool:
         except Exception:
             continue
     if any(defined.search(_active(t)) for t in texts.values()):
-        return False
+        return None
     main = tree.main
     text = texts.get(main)
     if text is None:
@@ -531,9 +550,12 @@ def ensure_preamble(repo: Repo) -> bool:
     insert = block.rstrip("\n").split("\n")
     if at > 0 and lines[at - 1].strip():
         insert = ["", *insert]
-    lines[at:at] = [*insert, ""]
-    write_text_file(repo.root, main, "\n".join(lines))
-    return True
+    insert.append("")
+    lines[at:at] = insert
+    edit = PreambleEdit(main=main, text="\n".join(lines), line=at + 1, count=len(insert))
+    if write:
+        _write(repo, main, edit.text)
+    return edit
 
 
 def count_outstanding(repo: Repo) -> Outstanding:
@@ -582,25 +604,32 @@ def apply(repo: Repo, revision_id: str, request: ApplyRequest) -> Applied:
             "the text changed since this rewrite was proposed; propose it again on the current "
             "wording",
         )
-    text, _ = read_text_file(repo.root, span.file)
-    lines = text.split("\n")
+    wrapped = bool(new_text.strip())
+    if wrapped:
+        # Fail before anything is written when main.tex cannot get the macro (no
+        # \begin{document}, unreadable): a half-applied revision could not be retried.
+        ensure_preamble(repo, write=False)
+    lines = _read(repo, span.file).split("\n")
     was_line = WAS_PREFIX + " ".join(span.original.split())
     joined = _joined(lines, span.line_start, span.line_end)
     if span.char_start is not None and span.char_end is not None:
-        replacement = _wrap(new_text) if new_text.strip() else ""
+        replacement = _wrap(new_text) if wrapped else ""
         new_joined = joined[: span.char_start] + replacement + joined[span.char_end :]
     else:
-        new_joined = _wrap(new_text) if new_text.strip() else ""
+        new_joined = _wrap(new_text) if wrapped else ""
     new_block = [was_line, *(new_joined.split("\n") if new_joined else [])]
     lines[span.line_start - 1 : span.line_end] = new_block
     updated = "\n".join(lines)
     if not updated.endswith("\n"):
         updated += "\n"
-    write_text_file(repo.root, span.file, updated)
-    if new_text.strip():
-        ensure_preamble(repo)
+    _write(repo, span.file, updated)
+    edit = ensure_preamble(repo) if wrapped else None
     line_start = span.line_start + 1
     line_end = span.line_start + max(1, len(new_block) - 1)
+    if edit is not None and normalize_rel(edit.main) == normalize_rel(span.file):
+        if span.line_start >= edit.line:  # the macro block went in above the span
+            line_start += edit.count
+            line_end += edit.count
     now = time.time()
     with db.connect(repo) as conn, db.transaction(conn):
         conn.execute(
@@ -647,8 +676,12 @@ class ReviseManager:
 
     async def comment(self, repo: Repo, request: CommentRequest) -> findings.Finding:
         finding = await asyncio.to_thread(add_comment, repo, request)
-        with db.connect(repo) as conn:
-            run = runstore.get_run(conn, finding.run_id)
+
+        def read_run() -> Run | None:
+            with db.connect(repo) as conn:
+                return runstore.get_run(conn, finding.run_id)
+
+        run = await asyncio.to_thread(read_run)
         if run is not None:
             self.bus.publish(RunFinished(run=run.model_dump(mode="json", by_alias=True)))
         self.bus.publish(FindingsUpdated(run_id=finding.run_id, file=finding.file))

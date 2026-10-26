@@ -143,6 +143,14 @@ export const useDraftStore = create<DraftState>()((set, get) => {
       if (!target || !draft) return false
       set({ applying: true, error: null })
       try {
+        // The backend edits the .tex on disk, so unsaved editor text is saved first (as adopt
+        // does): the cursor line must match the file, and the editor's next save must not
+        // conflict with (or overwrite) the draft.
+        const saved = await useStore.getState().save({ compileAfter: false })
+        if (!saved.ok) {
+          set({ error: `Not applied: the open file could not be saved first (${saved.error}).` })
+          return false
+        }
         const applied = await api.applyDraft(draft.id, {
           mode,
           text: get().text,

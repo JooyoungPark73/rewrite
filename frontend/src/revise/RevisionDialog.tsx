@@ -55,6 +55,9 @@ export default function RevisionDialog() {
   const diff = useMemo(() => (revision?.status === 'done' ? wordDiff(revision.original, text) : []), [revision, text])
 
   if (!finding) return null
+  // Every proposal for this finding except the one on screen (a reopened dialog shows none
+  // yet, so a single earlier proposal must be listed too).
+  const earlier = history.filter((r) => r.id !== revision?.id)
   const canApprove = revision?.status === 'done' && !revision.applied_at && finding.state !== 'dismissed'
   const propose = () => void start({ span, runner: runner || null, model: model || null, thinking: thinking || null })
   const copy = async () => {
@@ -218,17 +221,15 @@ export default function RevisionDialog() {
           </>
         )}
 
-        {history.length > 1 && (
+        {earlier.length > 0 && (
           <div className="text-xs text-base-content/60" data-testid="revision-history">
             Earlier proposals:{' '}
-            {history
-              .filter((r) => r.id !== revision?.id)
-              .map((r) => (
-                <button key={r.id} type="button" className="link link-hover mr-2" onClick={() => void show(r.id)} data-testid="revision-history-item">
-                  {formatTime(r.created_at)} {r.status}
-                  {r.applied_at ? ' · approved' : ''}
-                </button>
-              ))}
+            {earlier.map((r) => (
+              <button key={r.id} type="button" className="link link-hover mr-2" onClick={() => void show(r.id)} data-testid="revision-history-item">
+                {formatTime(r.created_at)} {r.status}
+                {r.applied_at ? ' · approved' : ''}
+              </button>
+            ))}
           </div>
         )}
       </div>

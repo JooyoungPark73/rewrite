@@ -149,6 +149,9 @@ def test_find_collapsed_and_wrap() -> None:
     assert _find_collapsed(hay, "absent") is None
     assert _wrap("One.") == "\\aigen{One.}"
     assert _wrap("One.\n\nTwo.\n") == "\\aigen{One.}\n\n\\aigen{Two.}"
+    # A comment on the last line must not comment out the closing brace.
+    assert _wrap("One.%") == "\\aigen{One.%\n}"
+    assert _wrap("One \\% more.") == "\\aigen{One \\% more.}"
 
 
 def test_parse_rewrite_rules() -> None:
@@ -280,6 +283,34 @@ def test_apply_refuses_when_the_text_moved(env: Env, initialized_repo: Path) -> 
     assert res.status_code in (400, 409) and (
         "changed" in res.json()["detail"] or "stale" in res.json()["detail"]
     )
+
+
+def test_apply_in_main_tex_reports_lines_after_the_macro_block(
+    env: Env, initialized_repo: Path
+) -> None:
+    # The abstract is in main.tex, below \begin{document}: the \aigen block inserted above it
+    # pushes the rewrite down, and the reported lines follow.
+    quote = "Serverless platforms hide cold-start latency by keeping idle instances warm"
+    finding = env.comment(file="main.tex", line_start=22, line_end=23, quote=quote, json_ref=None)
+    rev = env.wait(env.start(finding["id"])["id"])["revision"]
+    applied = ok(env.client.post(f"/api/revisions/{rev['id']}/apply", json={}))
+    lines = (initialized_repo / "main.tex").read_text().split("\n")
+    assert lines[applied["line_start"] - 1].startswith("\\aigen{")
+    assert lines[applied["line_start"] - 2].startswith("% aigen-was: Serverless platforms")
+
+
+def test_rewrite_refused_when_the_quote_is_only_in_a_was_line(
+    env: Env, initialized_repo: Path
+) -> None:
+    # After a whole-paragraph rewrite, another comment on that paragraph re-anchors onto the
+    # `% aigen-was:` line (the old wording lives on there); rewriting it there would change
+    # nothing in the document.
+    first = env.comment()
+    other = env.comment(quote="the long tail of", problem="Say which functions.")
+    rev = env.wait(env.start(first["id"], span="paragraph")["id"])["revision"]
+    ok(env.client.post(f"/api/revisions/{rev['id']}/apply", json={}))
+    res = env.client.post("/api/revisions", json={"finding_id": other["id"], "runner": "claude"})
+    assert res.status_code == 400 and "comment" in res.json()["detail"]
 
 
 def test_request_errors(env: Env) -> None:

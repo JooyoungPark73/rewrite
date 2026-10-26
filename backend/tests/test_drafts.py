@@ -272,6 +272,51 @@ def test_insert_for_a_planned_paragraph(env: Env, initialized_repo: Path) -> Non
     assert (initialized_repo / INTRO).read_text().count(f"% @p {new}") == 1
 
 
+def planned_draft(env: Env) -> tuple[str, dict[str, Any]]:
+    op = {"type": "insert", "parent_id": env.section_id, "index": 4, "level": "paragraph"}
+    new = ok(env.client.post("/api/spec/ops", json={"op": op}))["new_id"]
+    return new, env.wait(env.start(new)["id"])["draft"]
+
+
+def test_insert_under_a_marker_keeps_the_marker_on_its_paragraph(
+    env: Env, initialized_repo: Path
+) -> None:
+    # The cursor on the first line of a linked paragraph: the draft goes above that
+    # paragraph's marker, not between the marker and its text.
+    new, draft = planned_draft(env)
+    target = env.paragraph_ids[1]
+    before = (initialized_repo / INTRO).read_text().split("\n")
+    first_text_line = before.index(f"% @p {target}") + 2
+    ok(
+        env.client.post(
+            f"/api/drafts/{draft['id']}/apply",
+            json={"mode": "insert", "file": INTRO, "line": first_text_line},
+        )
+    )
+    after = (initialized_repo / INTRO).read_text().split("\n")
+    i = after.index(f"% @p {target}")
+    assert after[i + 1] == before[first_text_line - 1]
+    assert after.index(f"% @p {new}") < i
+    assert ok(env.client.get("/api/spec/status"))["nodes"][target]["status"] == "linked"
+
+
+def test_insert_refuses_places_outside_the_document_body(env: Env) -> None:
+    _, draft = planned_draft(env)
+    url = f"/api/drafts/{draft['id']}/apply"
+    for file, line in (("main.tex", 1), ("paper.json", 1), ("refs.bib", 1), ("../x.tex", 1)):
+        response = env.client.post(url, json={"mode": "insert", "file": file, "line": line})
+        assert response.status_code == 400, (file, response.text)
+
+
+def test_replace_keeps_crlf_line_endings(env: Env, initialized_repo: Path) -> None:
+    intro = initialized_repo / INTRO
+    intro.write_bytes(intro.read_bytes().replace(b"\n", b"\r\n"))
+    draft = env.wait(env.start(env.paragraph_ids[1])["id"])["draft"]
+    ok(env.client.post(f"/api/drafts/{draft['id']}/apply", json={"mode": "replace"}))
+    data = intro.read_bytes()
+    assert DRAFT_TEX.encode() in data and data.count(b"\n") == data.count(b"\r\n")
+
+
 def test_request_errors(env: Env) -> None:
     client = env.client
     assert client.post("/api/drafts", json={"node_id": "nope"}).status_code == 404

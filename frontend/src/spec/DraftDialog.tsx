@@ -57,6 +57,9 @@ export default function DraftDialog() {
   const [copied, setCopied] = useState(false)
 
   if (!target) return null
+  // Every draft of this node except the one on screen. When the dialog is reopened nothing is
+  // on screen yet, so a single earlier draft must be listed too (to pick it up again).
+  const earlier = history.filter((d) => d.id !== draft?.id)
   const canReplace = target.anchored && draft?.status === 'done' && !draft.applied_at
   const canInsert = !target.anchored && draft?.status === 'done' && !draft.applied_at && !!activeFile
 
@@ -202,17 +205,15 @@ export default function DraftDialog() {
           </>
         )}
 
-        {history.length > 1 && (
+        {earlier.length > 0 && (
           <div className="text-xs text-base-content/60" data-testid="draft-history">
             Earlier drafts of {target.nodeId}:{' '}
-            {history
-              .filter((d) => d.id !== draft?.id)
-              .map((d) => (
-                <button key={d.id} type="button" className="link link-hover mr-2" onClick={() => void show(d.id)} data-testid="draft-history-item">
-                  {formatTime(d.created_at)} {d.status}
-                  {d.applied_at ? ' · applied' : ''}
-                </button>
-              ))}
+            {earlier.map((d) => (
+              <button key={d.id} type="button" className="link link-hover mr-2" onClick={() => void show(d.id)} data-testid="draft-history-item">
+                {formatTime(d.created_at)} {d.status}
+                {d.applied_at ? ' · applied' : ''}
+              </button>
+            ))}
           </div>
         )}
       </div>

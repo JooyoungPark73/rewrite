@@ -24,7 +24,17 @@ from pydantic import BaseModel, ConfigDict
 from app import db, prompts, runstore, skeleton
 from app.config import ConfigError
 from app.events import DraftFinished, EventBus
-from app.files import normalize_rel, read_text_file, write_text_file
+from app.files import (
+    FileConflictError,
+    NotTextError,
+    PathError,
+    TooLargeError,
+    content_sha256,
+    normalize_rel,
+    read_text_file,
+    strip_tex_comment,
+    write_text_file,
+)
 from app.prompts import PromptError
 from app.repo import Repo
 from app.runner import RunResult
@@ -118,31 +128,32 @@ _FENCE_RE = re.compile(r"```[ \t]*[A-Za-z]*[ \t]*\r?\n(.*?)\r?\n?```", re.S)
 _NOTES_RE = re.compile(r"^\s*notes?\s*:\s*(.*)$", re.I | re.S)
 
 
-def parse_draft(result: RunResult) -> RunOutcome:
-    """The answer is one fenced block holding the LaTeX paragraph, optionally followed by a
-    `Notes:` line. Exactly one block with a non-empty paragraph that is one paragraph (no
-    heading, no `% @p` line, no document environment) → done with a DraftAnswer; anything
-    else → failed (the raw answer stays on the run)."""
+def parse_fenced(result: RunResult, what: str, asked: str, *, allow_empty: bool) -> RunOutcome:
+    """The drafting answer format (DRAFT_FORMAT here, REWRITE_FORMAT in app/revise.py): one
+    fenced block of LaTeX, optionally followed by a `Notes:` line. Exactly one block with no
+    heading, no `% @p` line and no document environment (and not empty unless `allow_empty`)
+    → done with a DraftAnswer; anything else → failed (the raw answer stays on the run).
+    `what` names the answer in errors ("draft"), `asked` says what was asked for."""
     text = result.text or ""
-    blocks = _FENCE_RE.findall(text)
+    blocks = _FENCE_RE.findall(text)  # an empty block (```latex\n```) matches too
     if not blocks:
         return RunOutcome(
             status="failed",
-            error="could not find the draft: the answer has no fenced ```latex block",
+            error=f"could not find the {what}: the answer has no fenced ```latex block",
         )
     if len(blocks) > 1:
         return RunOutcome(
             status="failed", error=f"the answer has {len(blocks)} fenced blocks; one was asked for"
         )
-    draft = blocks[0].strip("\n")
-    if not draft.strip():
+    block = blocks[0].strip("\n")
+    if not allow_empty and not block.strip():
         return RunOutcome(status="failed", error="the fenced block is empty")
-    if _FORBIDDEN_RE.search(draft):
+    if _FORBIDDEN_RE.search(block):
         return RunOutcome(
             status="failed",
             error=(
-                "rejected: the draft contains a heading, a `% @p` line or a document "
-                "environment (one paragraph was asked for)"
+                f"rejected: the {what} contains a heading, a `% @p` line or a document "
+                f"environment ({asked} was asked for)"
             ),
         )
     tail = text[text.rfind("```") + 3 :]
@@ -150,7 +161,12 @@ def parse_draft(result: RunResult) -> RunOutcome:
     m = _NOTES_RE.match(tail.strip())
     if m:
         notes = " ".join(m.group(1).split())
-    return RunOutcome(status="done", data=DraftAnswer(text=draft, notes=notes))
+    return RunOutcome(status="done", data=DraftAnswer(text=block, notes=notes))
+
+
+def parse_draft(result: RunResult) -> RunOutcome:
+    """A draft: one non-empty paragraph in one fenced block (see `parse_fenced`)."""
+    return parse_fenced(result, "draft", "one paragraph", allow_empty=False)
 
 
 # --------------------------------------------------------------------------- rows
@@ -281,6 +297,47 @@ def _drafted_comment(run: Run | None, draft_id: str) -> str:
     return f"% drafted by {who}{model}, draft {draft_id}: review before keeping"
 
 
+def _read_source(repo: Repo, file: str) -> str:
+    try:
+        content, _ = read_text_file(repo.root, file)
+    except FileNotFoundError as exc:
+        raise DraftError(404, f"file not found: {file}") from exc
+    except (PathError, NotTextError, TooLargeError, IsADirectoryError) as exc:
+        raise DraftError(400, f"cannot write a draft into {file}: {exc}") from exc
+    return content
+
+
+def _insertion_point(lines: list[str], at: int) -> int:
+    """`at` (a 0-based index to insert before), moved above the `% @p` marker when it falls
+    between a marker (and the comment lines under it) and the marker's paragraph: inserting
+    there would leave the marker followed by a blank line, i.e. detach it from its text."""
+    j = at - 1
+    while j >= 0 and lines[j].strip() and not skeleton.MARKER_RE.match(lines[j]):
+        if strip_tex_comment(lines[j]).strip():
+            return at  # a text line: the insertion point is not right under a marker
+        j -= 1
+    if j >= 0 and skeleton.MARKER_RE.match(lines[j]):
+        return j
+    return at
+
+
+_BEGIN_DOC_RE = re.compile(r"\\begin\s*\{document\}")
+_END_DOC_RE = re.compile(r"\\end\s*\{document\}")
+
+
+def _check_body(lines: list[str], at: int, file: str) -> None:
+    """Refuse an insertion into the main file's preamble or after `\\end{document}`."""
+    active = [strip_tex_comment(raw) for raw in lines]
+    begin = next((i for i, a in enumerate(active) if _BEGIN_DOC_RE.search(a)), None)
+    end = next((i for i, a in enumerate(active) if _END_DOC_RE.search(a)), None)
+    if begin is not None and at <= begin:
+        raise DraftError(
+            400, f"the cursor is in the preamble of {file}; place it in the document body"
+        )
+    if end is not None and at > end:
+        raise DraftError(400, f"the cursor is after \\end{{document}} in {file}")
+
+
 def apply(repo: Repo, draft_id: str, request: ApplyRequest) -> Applied:
     """Write the draft (or the author's edit of it, `request.text`) into the `.tex`.
 
@@ -328,18 +385,7 @@ def apply(repo: Repo, draft_id: str, request: ApplyRequest) -> Applied:
             raise DraftError(
                 400, f"{draft.node_id} has no marker in the source; use insert with a file and line"
             )
-        lines = scan.lines.get(marker.file, [])
-        span = skeleton.marker_paragraph(lines, marker_id or "")
-        if span is None:
-            raise DraftError(
-                400, f"the paragraph under the marker of {draft.node_id} could not be located"
-            )
-        _, first, last = span
-        before = lines[: first - 1]
-        after = lines[last:]
-        updated = [*before, comment, *new_lines, *after]
         file = marker.file
-        line_start, line_end = first + 1, first + len(new_lines)  # the comment sits at `first`
     else:
         if marker is not None:
             raise DraftError(
@@ -348,22 +394,49 @@ def apply(repo: Repo, draft_id: str, request: ApplyRequest) -> Applied:
         if not request.file or request.line is None or request.line < 1:
             raise DraftError(400, "insert needs a file and a 1-based line")
         file = normalize_rel(request.file)
-        try:
-            content, _ = read_text_file(repo.root, file)
-        except FileNotFoundError as exc:
-            raise DraftError(404, f"file not found: {file}") from exc
-        lines = content.split("\n")
-        at = min(request.line - 1, len(lines))
-        block = [skeleton.marker_line(draft.node_id), comment, *new_lines, ""]
+        if file not in scan.lines:
+            raise DraftError(
+                400,
+                f"{file} is not part of the document (not reached from {scan.main}); open one "
+                "of its .tex files and place the cursor in the body",
+            )
+    # The file as it is on disk (UTF-8, its own line endings), not the scan's lossy copy.
+    content = _read_source(repo, file)
+    parts = skeleton.split_lines_keepends(content)
+    lines = [part.rstrip("\r\n") for part in parts]
+    newline = skeleton._first_newline(content)
+
+    if request.mode == "replace":
+        span = skeleton.marker_paragraph(lines, marker_id or "")
+        if span is None:
+            raise DraftError(
+                400, f"the paragraph under the marker of {draft.node_id} could not be located"
+            )
+        _, first, last = span
+        block = [comment, *new_lines]
+        updated = [*parts[: first - 1], *(line + newline for line in block), *parts[last:]]
+        line_start, line_end = first + 1, first + len(new_lines)  # the comment sits at `first`
+    else:
+        at = _insertion_point(lines, min(request.line - 1, len(lines)))
+        if file == scan.main:
+            _check_body(lines, at, file)
+        block = [skeleton.marker_line(draft.node_id), comment, *new_lines]
+        if at < len(lines):
+            block.append("")  # a blank line before the text that follows
         if at > 0 and lines[at - 1].strip():
             block = ["", *block]
-        updated = [*lines[:at], *block, *lines[at:]]
+        before = parts[:at]
+        if before and not before[-1].endswith(("\n", "\r")):
+            before[-1] += newline  # the file had no final newline
+        updated = [*before, *(line + newline for line in block), *parts[at:]]
         offset = at + (1 if block[0] == "" else 0)
         line_start, line_end = offset + 3, offset + 2 + len(new_lines)
-    joined = "\n".join(updated)
-    if not joined.endswith("\n"):
-        joined += "\n"
-    write_text_file(repo.root, file, joined)
+    try:
+        write_text_file(repo.root, file, "".join(updated), base_sha256=content_sha256(content))
+    except FileConflictError as exc:
+        raise DraftError(409, str(exc)) from exc
+    except (PathError, TooLargeError) as exc:
+        raise DraftError(400, f"cannot write {file}: {exc}") from exc
     now = time.time()
     with db.connect(repo) as conn:
         conn.execute(

@@ -32,7 +32,8 @@ LaTeX; the authors will read it, edit it and decide whether to keep it.
    the work.
 4. **One piece.** A paragraph request yields one paragraph of prose: no heading, no `% @p`
    line, no `\label`, no figure or table environment, no list unless the surrounding source
-   uses them for the same purpose.
+   uses them for the same purpose. A rewrite of existing text keeps the `\label`s that text
+   already has: other parts of the paper refer to them.
 5. **LaTeX that compiles** in the surrounding document: balanced braces and math, the same
    macros the source uses, `~` before `\ref` and `\cite`, `\,` between numbers and units.
 6. **Output the LaTeX in one fenced block.** Return the draft inside a single

@@ -189,6 +189,14 @@ export const useReviseStore = create<ReviseState>()((set, get) => {
       if (!finding || !revision) return false
       set({ applying: true, error: null })
       try {
+        // The backend edits the .tex (and main.tex) on disk: unsaved editor text is saved
+        // first, so the span is located in what the author sees and the editor's next save
+        // does not conflict with (or overwrite) the rewrite.
+        const saved = await useStore.getState().save({ compileAfter: false })
+        if (!saved.ok) {
+          set({ error: `Not approved: the open file could not be saved first (${saved.error}).` })
+          return false
+        }
         const applied = await api.applyRevision(revision.id, get().text)
         set((s) => ({ history: upsert(s.history, applied.revision), outstanding: { ...s.outstanding, count: applied.outstanding } }))
         void get().refreshOutstanding()

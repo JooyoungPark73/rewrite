@@ -71,6 +71,7 @@ all (then return an empty block). Do not touch text outside {{ span_kind }}.
 {{ draft_schema }}
 
 The block holds the replacement for {{ span_kind }} only, as LaTeX: no `% @p` line, no
-heading, no `\label`. The `Notes:` line, when needed, is at most two sentences: what the
+heading, no new `\label` (keep every `\label` the text already has: other parts of the paper
+refer to it). The `Notes:` line, when needed, is at most two sentences: what the
 comment asked that the spec or the evidence does not allow, or a choice the authors should
 check. Leave it out when there is nothing to say.

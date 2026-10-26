@@ -63,7 +63,7 @@ SCOPE_KINDS: tuple[str, ...] = ("paper", "section", "file", "selection", "ends")
 PassLevel = Literal["message", "claim", "section", "paragraph", "sentence"]
 PASS_LEVELS: tuple[str, ...] = ("message", "claim", "section", "paragraph", "sentence")
 PassKind = Literal["review", "triage", "compare", "draft"]
-PASS_KINDS: tuple[str, ...] = ("review", "triage", "compare")
+PASS_KINDS: tuple[str, ...] = ("review", "triage", "compare", "draft")
 # Every pass may use these. `fanout` is true only for the members of a per-section fan-out
 # (phase 6); a pass that does not use it gets FANOUT_NOTE in front of its body instead.
 TEMPLATE_VARS = frozenset(
@@ -295,7 +295,11 @@ def load_passes(repo: Repo) -> list[PassDef]:
     return sorted(out, key=order)
 
 
-_KIND_FEATURE = {"triage": "the triage call", "compare": "the blind A/B compare"}
+_KIND_FEATURE = {
+    "triage": "the triage call",
+    "compare": "the blind A/B compare",
+    "draft": "drafting and rewrites; its place is prompts/drafts/",
+}
 
 
 def get_pass(repo: Repo, name: str) -> PassDef:
@@ -1207,15 +1211,11 @@ def _section_source_text(repo: Repo, spec: PaperSpec, section: Node) -> str:
     return "\n".join(out).strip("\n")
 
 
-def _current_text(repo: Repo, node: Node) -> str:
+def _current_text(scan: skeleton.DocScan, node: Node) -> str:
     if node.anchor is None:
         return ""
     marker_id = paragraph_marker_id(node)
     if marker_id is None:
-        return ""
-    try:
-        scan = skeleton.scan_document(repo.root, repo.main)
-    except ConfigError:
         return ""
     marker = skeleton.find_marker(scan, marker_id, node.anchor.file)
     if marker is None:
@@ -1266,7 +1266,7 @@ def assemble_draft_prompt(repo: Repo, node_id: str, answer_schema: str) -> Assem
         "section_says": parent.says,
         "claims_text": _claims_text(spec, node),
         "section_source": section_source,
-        "current_text": _current_text(repo, node),
+        "current_text": _current_text(scan, node),
         "labels": labels,
         "bib_keys": keys,
         "draft_schema": answer_schema,
