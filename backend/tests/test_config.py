@@ -23,7 +23,8 @@ def test_default_text_values() -> None:
     assert cfg.paper.main == "paper/my main.tex"
     assert cfg.compiler.kind == "native" and cfg.compiler.texlive_year == 2024
     assert cfg.runner.claude.command[:2] == ["claude", "-p"]
-    assert "--tools" in cfg.runner.claude.command
+    assert "--tools" not in cfg.runner.claude.command  # read-only tools come from tools_args
+    assert cfg.runner.claude.tools_args[:2] == ["--tools", "Read,Glob,Grep"]
     assert cfg.runner.codex.model_flag == "-m"
     assert cfg.models.message.thinking == "high"
     assert cfg.models.sentence.thinking == "low"
@@ -111,11 +112,14 @@ def test_phase1_config_gets_phase4_keys_in_memory(tmp_path: Path) -> None:
         "-c",
         "project_root_markers=[]",
     ]
-    assert cfg.runner.codex.no_tools_args == [
-        "--disable",
-        "shell_tool",
-        "--disable",
-        "unified_exec",
+    assert cfg.runner.codex.tools_args == []  # the shell stays on under --sandbox read-only
+    # phase-1 claude command: its `--tools ""` is stripped (read-only tools since 2026-10-26)
+    assert "--tools" not in cfg.runner.claude.command
+    assert cfg.runner.claude.tools_args == [
+        "--tools",
+        "Read,Glob,Grep",
+        "--allowedTools",
+        "Read,Glob,Grep",
     ]
     assert cfg.runner.codex.thinking_args == ["-c", "model_reasoning_effort={thinking}"]
     assert cfg.runner.codex.suppress_global is False
@@ -177,6 +181,34 @@ def test_phase4_config_gets_the_context_boundary_in_memory() -> None:
     assert cfg.runner.claude.isolation_args == ["--setting-sources", "", "--strict-mcp-config"]
 
 
+def test_legacy_no_tools_settings_are_stripped() -> None:
+    """Configs written before 2026-10-26 disabled tools; loaded today they get the read-only
+    tools: claude's `--tools ""` pair leaves the command, codex's `--disable shell_tool` /
+    `unified_exec` pairs leave the command and the `no_tools_args` key is ignored."""
+    cfg = parse_config(
+        "[runner.claude]\n"
+        'command = ["claude", "-p", "--tools", "", "--verbose"]\n'
+        'no_tools_args = ["--tools", ""]\n'
+        "[runner.codex]\n"
+        'command = ["codex", "exec", "--disable", "shell_tool", "--json", '
+        '"--disable", "unified_exec"]\n'
+        'no_tools_args = ["--disable", "shell_tool", "--disable", "unified_exec"]\n'
+    )
+    assert cfg.runner.claude.command == ["claude", "-p", "--verbose"]
+    assert cfg.runner.claude.tools_args == [
+        "--tools",
+        "Read,Glob,Grep",
+        "--allowedTools",
+        "Read,Glob,Grep",
+    ]
+    assert cfg.runner.codex.command[:3] == ["codex", "exec", "--json"]
+    assert "--disable" not in cfg.runner.codex.command and cfg.runner.codex.tools_args == []
+    assert not hasattr(cfg.runner.codex, "no_tools_args")
+    # an explicit tools_args is kept as written
+    custom = parse_config('[runner.claude]\ntools_args = ["--tools", "Read"]\n')
+    assert custom.runner.claude.tools_args == ["--tools", "Read"]
+
+
 def test_explicit_context_settings_are_kept() -> None:
     cfg = parse_config(
         "[runner.claude]\n"
@@ -193,3 +225,4 @@ def test_explicit_context_settings_are_kept() -> None:
         "-c",
         "project_root_markers=[]",
     ]
+

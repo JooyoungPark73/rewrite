@@ -366,12 +366,15 @@ class CliRunner:
         timeout_s: float = 1200.0,
         *,
         allow_api_keys: bool = False,  # [runner] allow_api_keys: keep API_KEY_ENV for the CLI
+        repo_root: Path | None = None,  # the paper repo ({repo} in tools_args); default: above
     ) -> None:
         self.config = config
         self.probe = probe
         self.sandbox = sandbox
         self.timeout_s = timeout_s
         self.allow_api_keys = allow_api_keys
+        # `.rewrite/sandbox/` sits two levels below the paper root.
+        self.repo_root = repo_root if repo_root is not None else sandbox.parent.parent
 
     # ----------------------------------------------------------------- argv
 
@@ -392,7 +395,8 @@ class CliRunner:
         """The argv for one run (the prompt is not part of it: it goes on stdin)."""
         cfg = self.config
         argv = list(cfg.command)
-        argv += cfg.no_tools_args  # always: a CLI that cannot disable tools must not run
+        # Always: a CLI that cannot restrict its tools must not run with its full set.
+        argv += [arg.replace("{repo}", str(self.repo_root)) for arg in cfg.tools_args]
         if self._group(cfg.isolation_args):
             argv += cfg.isolation_args
         if self._group(cfg.stream_args):

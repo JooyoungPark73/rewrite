@@ -1,10 +1,11 @@
 """LLM runners (PLAN.md "Backend architecture and interfaces", phase 4).
 
 `ClaudeRunner` (`claude -p`) and `CodexRunner` (`codex exec`) share `CliRunner`: cwd
-`.rewrite/sandbox/`, tools disabled, prompt on stdin, own process group. Their flags come
-from `[runner.claude]` / `[runner.codex]` in config.toml, filtered by what the installed
-CLI's `--help` lists. `paste` turns pasted JSON into a result. Runners never write the spec
-file (see tests/test_invariants.py).
+`.rewrite/sandbox/`, read-only tools (the model may read the paper repo: sources, figures,
+bibliography; a run that tries to write is killed), prompt on stdin, own process group.
+Their flags come from `[runner.claude]` / `[runner.codex]` in config.toml, filtered by what
+the installed CLI's `--help` lists. `paste` turns pasted JSON into a result. Runners never
+write the spec file (see tests/test_invariants.py).
 """
 
 from __future__ import annotations
@@ -37,8 +38,11 @@ def make_runner(
     timeout_s: float,
     *,
     allow_api_keys: bool = False,
+    repo_root: Path | None = None,
 ) -> CliRunner:
-    return RUNNERS[name](config, probe, sandbox, timeout_s, allow_api_keys=allow_api_keys)
+    return RUNNERS[name](
+        config, probe, sandbox, timeout_s, allow_api_keys=allow_api_keys, repo_root=repo_root
+    )
 
 
 __all__ = [

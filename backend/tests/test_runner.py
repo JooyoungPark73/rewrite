@@ -55,7 +55,7 @@ def test_default_config_flags_are_in_the_installed_help(name: str, flags: frozen
     cli = runner_default(name)
     groups = [
         cli.command[1:],
-        cli.no_tools_args,
+        cli.tools_args,
         cli.isolation_args,
         cli.stream_args,
         cli.thinking_args,
@@ -82,9 +82,11 @@ def test_claude_command_with_all_flags(tmp_path: Path) -> None:
         "--output-format",
         "stream-json",
         "--verbose",
-        "--tools",
-        "",
         "--no-session-persistence",
+        "--tools",
+        "Read,Glob,Grep",  # read-only tools (2026-10-26): the paper repo is readable
+        "--allowedTools",
+        "Read,Glob,Grep",
         "--setting-sources",
         "",  # no setting source: no CLAUDE.md from the paper repo (audit item 7)
         "--strict-mcp-config",
@@ -114,10 +116,6 @@ def test_codex_command_with_all_flags(tmp_path: Path) -> None:
         "project_doc_max_bytes=0",  # no AGENTS.md from the paper repo (audit item 7)
         "-c",
         "project_root_markers=[]",  # no repo skills either
-        "--disable",
-        "shell_tool",
-        "--disable",
-        "unified_exec",
         "--ignore-user-config",
         "--ignore-rules",
         "-c",
@@ -126,6 +124,18 @@ def test_codex_command_with_all_flags(tmp_path: Path) -> None:
         "/tmp/s.json",
     ]
     assert runner.uses_schema_file()
+    assert "--disable" not in argv  # the shell tool stays on, under --sandbox read-only
+
+
+def test_repo_placeholder_in_tools_args(tmp_path: Path) -> None:
+    cli = runner_default("claude")
+    cli.tools_args = ["--add-dir", "{repo}"]
+    sandbox = tmp_path / "paper" / ".rewrite" / "sandbox"
+    argv = ClaudeRunner(cli, full_probe(CLAUDE_FLAGS), sandbox).command(None, None)
+    assert argv[argv.index("--add-dir") + 1] == str(tmp_path / "paper")  # two levels up
+    explicit = ClaudeRunner(cli, full_probe(CLAUDE_FLAGS), sandbox, repo_root=tmp_path / "x")
+    argv = explicit.command(None, None)
+    assert argv[argv.index("--add-dir") + 1] == str(tmp_path / "x")
 
 
 def test_optional_groups_dropped_when_the_cli_lacks_them(tmp_path: Path) -> None:
@@ -133,12 +143,14 @@ def test_optional_groups_dropped_when_the_cli_lacks_them(tmp_path: Path) -> None
     cli.thinking = {"low": "low", "medium": "medium", "high": "max"}
     old = CliProbe(True, "/x", frozenset({"-p", "--output-format", "--verbose", "--model"}))
     argv = ClaudeRunner(cli, old, tmp_path).command("", "high", schema=findings_schema())
-    assert argv == cli.command  # no model (empty), no effort, schema, isolation or stream flags
+    # no model (empty), no effort, schema, isolation or stream flags; the tool restriction
+    # is always added
+    assert argv == cli.command + cli.tools_args
     argv = ClaudeRunner(cli, full_probe(CLAUDE_FLAGS), tmp_path).command(None, "high")
     assert argv[-2:] == ["--effort", "max"]  # the configured mapping
     codex = runner_default("codex")
     bare = CodexRunner(codex, CliProbe(True, "/x", frozenset()), tmp_path).command("m", "low")
-    assert bare == codex.command + codex.no_tools_args  # tools are always disabled
+    assert bare == codex.command + codex.tools_args  # the tool restriction is always added
 
 
 # --------------------------------------------------------------------------- parsers
@@ -173,13 +185,47 @@ def test_claude_structured_output_stream() -> None:
     assert parsed.usage is not None and parsed.usage.cost_usd == pytest.approx(0.014688)
 
 
-def test_claude_tools_enabled_aborts() -> None:
+def test_claude_tool_stream_reads_then_answers() -> None:
+    """Shape observed on claude 2.1.310 (2026-10-26) with `--tools Read,Glob,Grep` and
+    `--json-schema`: Read calls and their results are status events, the StructuredOutput
+    call is the answer, and nothing aborts."""
+    parser = ClaudeStreamParser()
+    events = feed(parser, "claude-tools-stream.jsonl")
+    parsed = parser.finish()
+    assert parser.abort_reason is None and parsed.error is None and parsed.completed
+    assert parsed.structured == {"title": "Warm Pools Are Not Enough", "bib_entries": 3}
+    statuses = [e.text for e in events if e.kind == "status"]
+    assert statuses[0].endswith("tools: Glob, Grep, Read, StructuredOutput")
+    assert any(s == "Read: /paper/main.tex" for s in statuses)
+    # one result per Read; the StructuredOutput acknowledgement is not reported
+    assert sum(s.startswith("tool result: ") for s in statuses) == 2
+    assert statuses[-1].endswith("2 tool calls")
+    # the answer's JSON is streamed as text after the model's prose; the Read calls'
+    # inputs are not
+    streamed = "".join(e.text for e in events if e.kind == "text")
+    assert "file_path" not in streamed
+    prose, answer = streamed.split("Three entries.", 1)
+    assert prose == "" and json.loads(answer) == parsed.structured
+
+
+def test_claude_write_tool_aborts() -> None:
+    """A run may read but never write: a Write/Edit/Bash call aborts it, whatever the
+    config let through. A plain Read is reported and allowed."""
     parser = ClaudeStreamParser()
     parser.feed(json.dumps({"type": "system", "subtype": "init", "tools": ["Bash", "Read"]}))
-    assert parser.abort_reason is not None and "Bash" in parser.abort_reason
-    late = ClaudeStreamParser()
-    late.feed(json.dumps({"type": "system", "subtype": "init", "tools": []}))
-    late.feed(
+    assert parser.abort_reason is None  # the init line only reports the tool list
+    events = parser.feed(
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [{"type": "tool_use", "name": "Read", "input": {"file_path": "a"}}]
+                },
+            }
+        )
+    )
+    assert parser.abort_reason is None and events[0].text == "Read: a"
+    parser.feed(
         json.dumps(
             {
                 "type": "assistant",
@@ -187,7 +233,20 @@ def test_claude_tools_enabled_aborts() -> None:
             }
         )
     )
-    assert late.abort_reason is not None and "Write" in late.abort_reason
+    assert parser.abort_reason is not None and "Write" in parser.abort_reason
+    streamed = ClaudeStreamParser()
+    streamed.feed(
+        json.dumps(
+            {
+                "type": "stream_event",
+                "event": {
+                    "type": "content_block_start",
+                    "content_block": {"type": "tool_use", "name": "Bash", "input": {}},
+                },
+            }
+        )
+    )
+    assert streamed.abort_reason is not None and "Bash" in streamed.abort_reason
 
 
 def test_claude_error_result() -> None:
@@ -224,11 +283,29 @@ def test_codex_schema_stream_answer_is_the_last_message() -> None:
     assert json.loads(parser.finish().text)["findings"][0]["word"] == "red"
 
 
-def test_codex_tool_use_aborts() -> None:
-    """Shape observed on codex-cli 0.162.1 with the shell tool enabled."""
+def test_codex_shell_commands_are_reported_not_aborted() -> None:
+    """Shape observed on codex-cli 0.162.1 with the shell tool enabled: a command is a
+    status event (start and exit), the run goes on."""
     parser = CodexStreamParser()
-    feed(parser, "codex-tool-stream.jsonl")
-    assert parser.abort_reason is not None and "command_execution" in parser.abort_reason
+    events = feed(parser, "codex-tool-stream.jsonl")
+    assert parser.abort_reason is None
+    statuses = [e.text for e in events if e.kind == "status"]
+    assert "command: /bin/bash -lc 'ls /'" in statuses
+    assert any(s.startswith("command exited 0, ") for s in statuses)
+
+
+def test_codex_file_change_aborts() -> None:
+    parser = CodexStreamParser()
+    events = parser.feed(
+        json.dumps(
+            {
+                "type": "item.started",
+                "item": {"id": "i", "type": "file_change", "changes": [{"path": "main.tex"}]},
+            }
+        )
+    )
+    assert parser.abort_reason is not None and "file_change" in parser.abort_reason
+    assert events[0].text == "blocked: file_change"
 
 
 def test_codex_failed_turn() -> None:
@@ -424,16 +501,25 @@ async def test_hard_timeout_kills_the_run(tmp_path: Path) -> None:
     assert await wait_gone(pid)
 
 
-async def test_enabled_tools_abort_the_run(tmp_path: Path) -> None:
+async def test_a_write_tool_call_kills_the_run(tmp_path: Path) -> None:
+    write_call = json.dumps(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "tool_use", "name": "Edit", "input": {"file_path": "m"}}]
+            },
+        }
+    )
     body = (
         'case "$*" in *--help*) echo "-p"; exit 0;; esac\n'
         'echo $$ > "$(dirname "$0")/pid"\n'
-        'echo \'{"type":"system","subtype":"init","tools":["Bash","Edit"]}\'\n'
+        'echo \'{"type":"system","subtype":"init","tools":["Read","Edit"]}\'\n'
+        f"echo '{write_call}'\n"
         "sleep 30\n"
     )
     runner, bin_dir = make_runner(tmp_path, body)
     result = await runner.run("p", None, None, None)
-    assert result.status == "failed" and "tools enabled" in (result.error or "")
+    assert result.status == "failed" and "tried to write (Edit)" in (result.error or "")
     assert await wait_gone(int((bin_dir / "pid").read_text()))
 
 

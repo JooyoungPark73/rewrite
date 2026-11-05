@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass, field
@@ -39,7 +40,7 @@ import jinja2.meta
 import yaml
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from app import anchors, skeleton
+from app import anchors, figures, skeleton
 from app.config import ConfigError
 from app.files import (
     NotTextError,
@@ -909,6 +910,111 @@ def _resolve_ends(repo: Repo, spec: PaperSpec) -> ResolvedScope:
     )
 
 
+# --------------------------------------------------------------------------- paper files
+
+PAPER_FILES_HEADING = "## Paper files"
+PAPER_FILES_MAX = 300  # entries listed in a prompt; the rest are counted
+PAPER_FILES_SKIP_DIRS = frozenset({"node_modules", "__pycache__"})  # plus every dot-dir
+# LaTeX by-products that may sit next to the sources when the paper was compiled by hand.
+PAPER_FILES_SKIP_SUFFIXES = (
+    ".aux",
+    ".bbl",
+    ".blg",
+    ".fdb_latexmk",
+    ".fls",
+    ".log",
+    ".out",
+    ".synctex.gz",
+    ".toc",
+    ".lof",
+    ".lot",
+    ".nav",
+    ".snm",
+)
+TREE_HASH_CONTENT_MAX = 32 * 1024 * 1024  # larger files are hashed by path, size and mtime
+
+
+def paper_files(root: Path) -> list[str]:
+    """The files of the paper repo a run may read, as sorted posix paths relative to `root`.
+    Dot-files and dot-directories (`.git`, `.rewrite`) and LaTeX by-products are left out."""
+    out: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(
+            d for d in dirnames if not d.startswith(".") and d not in PAPER_FILES_SKIP_DIRS
+        )
+        for name in sorted(filenames):
+            if name.startswith(".") or name.endswith(PAPER_FILES_SKIP_SUFFIXES):
+                continue
+            out.append((Path(dirpath) / name).relative_to(root).as_posix())
+    return out
+
+
+def repo_tree_hash(root: Path) -> str:
+    """sha256 over the paper files (path, size and content): part of every cache key,
+    because a run may read any of them, not only the scoped source in the prompt."""
+    digest = hashlib.sha256()
+    for rel in paper_files(root):
+        path = root / rel
+        try:
+            stat = path.stat()
+            digest.update(f"{rel}\0{stat.st_size}\0".encode())
+            if stat.st_size > TREE_HASH_CONTENT_MAX:
+                digest.update(f"mtime:{stat.st_mtime_ns}\0".encode())
+                continue
+            with path.open("rb") as handle:
+                for chunk in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(chunk)
+        except OSError:
+            digest.update(f"{rel}\0unreadable\0".encode())
+    return digest.hexdigest()
+
+
+def rendered_figures_lines(rendered: list[figures.RenderedFigure]) -> list[str]:
+    """The "rendered as PNG" part of the paper files block ([] when the repo has no PDF)."""
+    if not rendered:
+        return []
+    lines = [
+        "",
+        "Each PDF is also rendered as a PNG image (page 1, then `-p2`, `-p3` for further "
+        "pages) under `.rewrite/build/figures/`; view the PNG when your tools cannot show "
+        "the PDF itself:",
+        "",
+    ]
+    for entry in rendered:
+        if entry.error or not entry.images:
+            lines.append(f"- {entry.source}: {entry.error or 'not rendered'}")
+            continue
+        extra = ""
+        if entry.pages > len(entry.images):
+            extra = f" (first {len(entry.images)} of {entry.pages} pages)"
+        lines.append(f"- {entry.source} → {entry.images[0]}{extra}")
+    return lines
+
+
+def paper_files_block(repo: Repo) -> str:
+    """The closing section of every prompt: where the paper lives on disk and what it
+    contains, so the model can read a figure, the bibliography or another section with its
+    read-only tools when the source in the prompt is not enough. Renders the repo's PDFs to
+    PNG first (app/figures.py; cached) and maps each to its image."""
+    files = paper_files(repo.root)
+    shown = files[:PAPER_FILES_MAX]
+    lines = [
+        PAPER_FILES_HEADING,
+        "",
+        f"The paper repository is `{repo.root}`; its main file is `{_main(repo)}`. You may "
+        "read any file in it with your tools, figure PDFs included, when the source above "
+        "is not enough: to check a figure the text describes, a bibliography entry, or how "
+        "another section states something. You cannot write. Paths are relative to the "
+        "repository:",
+        "",
+        *(f"- {rel}" for rel in shown),
+    ]
+    if len(files) > len(shown):
+        lines.append(f"- … and {len(files) - len(shown)} more files")
+    lines += rendered_figures_lines(figures.render_figures(repo.root, repo.build_dir, files))
+    return "\n".join(lines)
+
+
 # --------------------------------------------------------------------------- assembly
 
 
@@ -935,6 +1041,8 @@ class AssembledPrompt:
     # "" for a plain run; "fanout" for a fan-out member, whose prompt differs (phase 6). It
     # is part of the cache key, so a member never reuses a plain run's answer or vice versa.
     variant: str = ""
+    # sha256 of the paper files (`repo_tree_hash`): the run may read any of them.
+    tree_hash: str = ""
 
     @property
     def scope(self) -> Scope:
@@ -947,7 +1055,8 @@ class AssembledPrompt:
     def cache_key(self, runner: str, model: str | None, thinking: str | None) -> str:
         """sha256 over the pass file, system.md, the scoped source, the spec file, the
         runner, the model and the thinking level (phase-4 brief "Cache key"), plus the
-        prompt variant when there is one."""
+        prompt variant when there is one and the paper files' hash (2026-10-26: a run may
+        read any file of the paper, so a changed figure or bibliography invalidates it)."""
         return sha256(
             self.pass_def.text,
             self.system_text,
@@ -957,6 +1066,7 @@ class AssembledPrompt:
             model or "",
             thinking or "",
             *([self.variant] if self.variant else []),
+            *([self.tree_hash] if self.tree_hash else []),
         )
 
 
@@ -1026,6 +1136,8 @@ def assemble_compare_prompt(
         "version_b": version_b,
     }
     body = render_pass(pass_def, variables)
+    # No "Paper files" section: the comparison is blind, and the repo on disk would tell
+    # the model which version is the current text.
     return AssembledPrompt(
         pass_def=pass_def,
         resolved=ResolvedScope(scope=scope, name=scope_name, source=source, files={}),
@@ -1035,6 +1147,7 @@ def assemble_compare_prompt(
         prompt_hash=sha256(pass_def.text, system_text),
         scope_hash=sha256(source),
         spec_hash=sha256(spec_text),
+        tree_hash=repo_tree_hash(repo.root),
     )
 
 
@@ -1058,7 +1171,7 @@ def assemble_prompt(
         "fanout": fanout,
     }
     body = render_pass(pass_def, variables)
-    parts = [system_text, body]
+    parts = [system_text, body, paper_files_block(repo)]
     if fanout and "fanout" not in pass_def.variables:
         parts.insert(1, FANOUT_NOTE.format(scope_name=resolved.name))
     return AssembledPrompt(
@@ -1070,6 +1183,7 @@ def assemble_prompt(
         prompt_hash=sha256(pass_def.text, system_text),
         scope_hash=sha256(resolved.source),
         spec_hash=sha256(spec_text),
+        tree_hash=repo_tree_hash(repo.root),
         variant="fanout" if fanout else "",
     )
 
@@ -1099,12 +1213,13 @@ def assemble_triage_prompt(
     return AssembledPrompt(
         pass_def=pass_def,
         resolved=resolved,
-        prompt=join_prompt([system_text, body]),
+        prompt=join_prompt([system_text, body, paper_files_block(repo)]),
         system_text=system_text,
         spec_text=spec_text,
         prompt_hash=sha256(pass_def.text, system_text),
         scope_hash=sha256(resolved.source),
         spec_hash=sha256(spec_text),
+        tree_hash=repo_tree_hash(repo.root),
         variant="triage",
     )
 
@@ -1284,12 +1399,13 @@ def assemble_draft_prompt(repo: Repo, node_id: str, answer_schema: str) -> Assem
     return AssembledPrompt(
         pass_def=template,
         resolved=resolved,
-        prompt=join_prompt([system_text, body]),
+        prompt=join_prompt([system_text, body, paper_files_block(repo)]),
         system_text=system_text,
         spec_text=spec_text,
         prompt_hash=sha256(template.text, system_text),
         scope_hash=sha256(section_source),
         spec_hash=sha256(spec_text),
+        tree_hash=repo_tree_hash(repo.root),
         variant="draft",
     )
 
@@ -1366,11 +1482,12 @@ def assemble_rewrite_prompt(
     return AssembledPrompt(
         pass_def=template,
         resolved=resolved,
-        prompt=join_prompt([system_text, body]),
+        prompt=join_prompt([system_text, body, paper_files_block(repo)]),
         system_text=system_text,
         spec_text=spec_text,
         prompt_hash=sha256(template.text, system_text),
         scope_hash=sha256(original),
         spec_hash=sha256(spec_text),
+        tree_hash=repo_tree_hash(repo.root),
         variant="rewrite",
     )

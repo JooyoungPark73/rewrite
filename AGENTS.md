@@ -15,7 +15,12 @@ was exercised against a local bare remote, not a real GitHub remote; see the
 (`prompts/drafts/`, `app/drafts.py`, the Draft dialog); phase 8 (2026-10-20) adds Revise:
 author comments as findings and model rewrite proposals approved into `\aigen{...}` wrappers
 (`app/revise.py`, `prompts/drafts/rewrite.md`); see `phase-7-drafting.md` and
-`phase-8-revise.md`. The app covers Write, Revise and Review. The optional
+`phase-8-revise.md`. Since 2026-10-26 runs have read-only tools instead of none (the author's
+decision after seeing that figure PDFs could not reach the model): claude gets Read, Glob and
+Grep, codex keeps its shell under the read-only sandbox, every prompt ends with a "Paper
+files" section that also maps each PDF to a PNG the app renders with pypdfium2 into
+`.rewrite/build/figures/` (`app/figures.py`; codex views images, not PDFs), the cache key
+covers the paper files, and a run that calls a writing tool is killed. The app covers Write, Revise and Review. The optional
 Tauri wrap is not built. Briefs and per-phase status live in `.agents/scratch/`; the user-facing
 workflow and prompt-set description is `docs/workflow.md`.
 See "Build phases" in PLAN.md for the scope of each phase. Do not start phase N+1 work while phase N's manual checks are open.
@@ -30,7 +35,8 @@ See "Build phases" in PLAN.md for the scope of each phase. Do not start phase N+
   to `~/.config`, `~/.local` or any global path.
 - `paper.json` is written only by the spec editor. No code path may write it
   from LLM output. Treat this as a hard invariant and add a test for it.
-- LLM CLIs run with cwd `.rewrite/sandbox/`, tools disabled, prompt on stdin.
+- LLM CLIs run with cwd `.rewrite/sandbox/`, read-only tools (the model may read the paper
+  repo, figures included, never write; a run that tries to write is killed), prompt on stdin.
   Flags live in `config.toml`; verify them with `claude --help` and
   `codex exec --help` on this machine before hard-coding anything.
 - Bind the server to `127.0.0.1` only.

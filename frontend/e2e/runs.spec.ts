@@ -165,7 +165,8 @@ test('Show prompt shows the exact prompt and argv, and Copy puts it on the clipb
   await expect(prompt).toContainText('## Pass: paragraph-function')
   await expect(prompt).toContainText('Scope: Section: Introduction')
   await expect(prompt).toContainText('   2 | Mock papers are useful for testing user interfaces.')
-  await expect(dialog.getByTestId('prompt-command')).toContainText("claude -p --output-format stream-json --verbose --tools ''")
+  // Read-only tools since 2026-10-26 (was `--tools ''`, no tools at all).
+  await expect(dialog.getByTestId('prompt-command')).toContainText('claude -p --output-format stream-json --verbose --no-session-persistence --tools Read,Glob,Grep --allowedTools Read,Glob,Grep')
   await expect(dialog.getByTestId('prompt-cache-badge')).toHaveText('not cached')
 
   const text = await prompt.textContent()

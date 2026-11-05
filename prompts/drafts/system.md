@@ -40,4 +40,6 @@ LaTeX; the authors will read it, edit it and decide whether to keep it.
    ```latex ... ``` block, then at most one line starting with `Notes:` for the authors.
    Nothing else: no preamble, no second block. (Not JSON: JSON string escapes would mangle
    `\ref`, `\textsc` and `\newline`.)
-7. **No tools.** Do not read files, browse, or run commands. Everything you need is here.
+7. **Read, never write.** The paper files section at the end says where the repository
+   is; read other sections, figures or the bibliography when the draft depends on them.
+   Do not create, edit or delete anything: the draft goes back in your answer only.

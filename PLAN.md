@@ -126,7 +126,7 @@ The stale state is the human half of the figure's "reconcile affected ancestors"
 
 The backend is a thin FastAPI process that owns the repo on disk and shells out for everything heavy. Two interfaces carry the parts that vary by machine or by choice, and both have two implementations from the start:
 
-Runtime architecture (text form): Browser UI (React, localhost only; Editor · PDF · Spec · Findings) ⇄ HTTP + WebSocket ⇄ FastAPI backend (Compiler · Runner · SyncTeX · git ops · spec validator · SQLite state.db). The backend spawns three subprocess kinds: `latexmk` (native or Docker, synctex on, output to build/), the LLM CLIs (`claude -p`, `codex exec`; cwd `.rewrite/sandbox/`, tools disabled) and `git` (status, diff, commit, push, pull with host credentials). The backend reads and writes the paper repo on disk (`*.tex`, `paper.json`, `.rewrite/`); git talks to Overleaf and GitHub as plain remotes.
+Runtime architecture (text form): Browser UI (React, localhost only; Editor · PDF · Spec · Findings) ⇄ HTTP + WebSocket ⇄ FastAPI backend (Compiler · Runner · SyncTeX · git ops · spec validator · SQLite state.db). The backend spawns three subprocess kinds: `latexmk` (native or Docker, synctex on, output to build/), the LLM CLIs (`claude -p`, `codex exec`; cwd `.rewrite/sandbox/`, read-only tools) and `git` (status, diff, commit, push, pull with host credentials). The backend reads and writes the paper repo on disk (`*.tex`, `paper.json`, `.rewrite/`); git talks to Overleaf and GitHub as plain remotes.
 
 The browser talks only to the backend; the backend reads and writes the paper repo and spawns `latexmk`, the LLM CLIs and `git` as subprocesses, with the LLM CLIs confined to the sandbox directory.
 
@@ -148,7 +148,7 @@ Compiler details:
 Runner details:
 
 - Prompt goes in via stdin, never argv.
-- cwd is `.rewrite/sandbox/`, tools disabled, structured-output flag when the installed CLI supports it, fenced-JSON parse as fallback.
+- cwd is `.rewrite/sandbox/`, read-only tools (decision 2026-10-26, replacing "tools disabled": the model may read the paper repo, figure PDFs and bibliography included, and every prompt ends with a "Paper files" section naming the repo path, listing its files and mapping each PDF to the PNG the app rendered under `.rewrite/build/figures/` with pypdfium2, since codex can view images but not PDFs; writes are impossible by flags and a run that attempts one is killed), structured-output flag when the installed CLI supports it, fenced-JSON parse as fallback.
 - `claude -p --model <m> --output-format stream-json` and `codex exec -m <m> -c model_reasoning_effort=<level> --sandbox read-only --json`. Exact flags live in `config.toml` under `[runner.claude]` and `[runner.codex]`; phase 4 verifies them against `claude --help` and `codex exec --help` on the target machine.
 - Thinking level is exposed as low / medium / high / xhigh / max in the UI (both installed CLIs accept all five, verified 2026-10-19) and mapped per runner in config.
 - Events are forwarded over a WebSocket for progress; cancel kills the process group. One run per scope at a time, concurrency cap of 3 overall.
@@ -218,7 +218,7 @@ The four rules are enforced by code, not only by prompt wording, so a prompt edi
 | No rewrites | The findings schema has no replacement field; a validator rejects findings that contain quoted replacement text unless the pass sets `allow_rewrites: true`. Drafting (`kind: draft`, `prompts/drafts/`) is not a review pass: it returns `{draft, notes}` to a dialog, never a finding, and the author decides what enters the `.tex` |
 | No praise | The schema admits only problems; zero findings is the only positive signal; any free-text preamble is stripped before parsing |
 | Clean context | Every run is a new process with a fully assembled prompt; no session ids are reused; no editing history or prior findings enter a prompt except in the explicit triage call |
-| Read-only `paper.json` | Runner cwd is `.rewrite/sandbox/` with tools disabled, so the CLI cannot reach the file; the app never writes `paper.json` from model output |
+| Read-only `paper.json` | Runners have read-only tools (claude: `--tools Read,Glob,Grep`; codex: `--sandbox read-only`), and the stream parsers kill a run whose model calls a writing tool, so the CLI can read but never change the file; the app never writes `paper.json` from model output |
 
 A finding that fails validation is logged with the raw output and shown as "rejected" in the run detail, so a misbehaving prompt is visible rather than quietly dropped.
 
@@ -230,7 +230,7 @@ Phase 4:
 
 - Prompts via stdin; streaming events over WebSocket; cancel by killing the process group.
 - "Show prompt" previews the exact assembled prompt; "copy prompt" puts it on the clipboard for use in a web UI, with a paste-back box for JSON findings.
-- Content-hash caching keyed on pass hash, scope hash, `paper.json` hash, model and thinking level; an unchanged scope returns cached findings at once.
+- Content-hash caching keyed on pass hash, scope hash, `paper.json` hash, model and thinking level, plus (since the model can read any paper file) a hash of the paper repo's files; an unchanged scope returns cached findings at once.
 - Every run stores the raw prompt and raw output for replay and run-to-run diff.
 - Token count, cost and wall time per run in the sidebar.
 

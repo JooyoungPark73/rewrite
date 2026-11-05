@@ -450,7 +450,7 @@ export function createRunsApi(ctx) {
       runner === 'codex'
         ? ['codex', 'exec', '--json', '--sandbox', 'read-only', '--skip-git-repo-check', '--ephemeral', ...(model ? ['-m', model] : []), '-c', `model_reasoning_effort=${thinking}`]
         : runner === 'claude'
-          ? ['claude', '-p', '--output-format', 'stream-json', '--verbose', '--tools', '', '--no-session-persistence', '--setting-sources', 'project', ...(model ? ['--model', model] : []), '--effort', thinking]
+          ? ['claude', '-p', '--output-format', 'stream-json', '--verbose', '--no-session-persistence', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep', '--setting-sources', '', ...(model ? ['--model', model] : []), '--effort', thinking]
           : []
     const cacheKey = JSON.stringify([pass.name, prompt, ctx.specRaw(), runner, model, thinking])
     const scopeKey = `${pass.name}:${resolved.scope.kind}:${resolved.scope.ref ?? resolved.scope.file}`

@@ -12,7 +12,9 @@ each level of the spec means and a filled example, see `examples/sample-paper-wi
 
 `system.md` frames every run: the model screens someone else's submitted draft; problems only,
 no rewrites, quote verbatim, judge the text against the spec without assuming either side is
-right, stay in scope, calibrate severity, JSON only, no tools. The backend enforces the same
+right, stay in scope, calibrate severity, JSON only, read but never write. Every prompt ends
+with the paper's file list and a PNG rendering of each figure PDF, so the model can check a
+figure or a reference itself. The backend enforces the same
 rules in code (schema without a replacement field, rewrite and praise filters).
 
 The review passes, coarse to fine, one per spec level:

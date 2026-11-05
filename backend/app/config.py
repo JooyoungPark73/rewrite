@@ -63,11 +63,16 @@ class RunnerCliConfig(_Section):
     Every run is `command` plus the optional argument groups below. A group is added only
     when the installed CLI's `--help` lists every flag in it (probed once per process, see
     app/runner/base.py `probe_cli`), so a config written for a newer CLI degrades instead of
-    breaking. `no_tools_args` is the exception: it is always added, so a CLI that cannot
-    disable its tools fails loudly instead of running with them.
+    breaking. `tools_args` is the exception: it is always added, so a CLI that cannot
+    restrict its tools fails loudly instead of running with its full default set.
+
+    Tools (2026-10-26): a run may read the paper repo (sources, figures, bibliography)
+    but never write: `tools_args` names read-only tools for claude; codex keeps its shell
+    under `--sandbox read-only`. The parsers abort a run that tries to write a file.
 
     Placeholders: `{thinking}` (the mapped thinking value), `{schema}` (the findings JSON
-    schema as text) and `{schema_file}` (a temp file holding it).
+    schema as text), `{schema_file}` (a temp file holding it) and `{repo}` (the paper
+    repo's absolute path).
     """
 
     command: list[str]
@@ -77,7 +82,7 @@ class RunnerCliConfig(_Section):
         default_factory=lambda: {"low": "low", "medium": "medium", "high": "high"}
     )
     schema_args: list[str] = Field(default_factory=list)  # structured output
-    no_tools_args: list[str] = Field(default_factory=list)  # always added
+    tools_args: list[str] = Field(default_factory=list)  # read-only tools; always added
     isolation_args: list[str] = Field(default_factory=list)  # skip user-level settings
     # Whether `isolation_args` keep the user's global instruction file (~/.claude/CLAUDE.md,
     # ~/.codex/AGENTS.md) out of the run on the installed CLI version. A recorded fact, not a
@@ -95,15 +100,18 @@ CLAUDE_DEFAULTS: dict[str, Any] = {
         "--output-format",
         "stream-json",
         "--verbose",
-        "--tools",
-        "",
         "--no-session-persistence",
     ],
     "model_flag": "--model",
     "thinking_args": ["--effort", "{thinking}"],
     "thinking": {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"},
     "schema_args": ["--json-schema", "{schema}"],
-    "no_tools_args": [],  # `--tools ""` is part of the command
+    # Read-only file tools (verified 2026-10-26 on claude 2.1.310 with real runs from the
+    # sandbox): `--tools` limits the built-in set to Read, Glob and Grep (plus the
+    # StructuredOutput tool `--json-schema` adds); `--allowedTools` lets them run on any
+    # path without a permission prompt, so the paper repo above the sandbox is readable.
+    # Read renders figure PDFs as images. No Write, Edit or Bash.
+    "tools_args": ["--tools", "Read,Glob,Grep", "--allowedTools", "Read,Glob,Grep"],
     # `--setting-sources ""`: no user, project or local source. With `project` claude loads
     # every CLAUDE.md from the sandbox up to / (the paper root's too); see DEFAULT_CONFIG_TOML.
     "isolation_args": ["--setting-sources", "", "--strict-mcp-config"],
@@ -123,6 +131,13 @@ CODEX_CONTEXT_OPTIONS: tuple[tuple[str, str], ...] = (
 )
 # The phase-4 default, replaced in memory by CLAUDE_DEFAULTS["isolation_args"].
 PHASE4_CLAUDE_ISOLATION = ["--setting-sources", "project", "--strict-mcp-config"]
+# Until 2026-10-26 runs had no tools: claude's command carried `--tools ""` and codex's
+# `no_tools_args` switched its shell off. Both are stripped when an older config is loaded
+# (`RunnerConfig._fill_missing_keys`), so a paper initialised before then gets the read-only
+# tools too without its config.toml being rewritten.
+LEGACY_NO_TOOLS_KEY = "no_tools_args"
+LEGACY_CLAUDE_NO_TOOLS = ("--tools", "")
+LEGACY_CODEX_NO_TOOLS = frozenset({"shell_tool", "unified_exec"})
 
 # Verified 2026-10-18 on codex-cli 0.162.1 (`codex exec --help` and real runs).
 CODEX_DEFAULTS: dict[str, Any] = {
@@ -140,9 +155,10 @@ CODEX_DEFAULTS: dict[str, Any] = {
     "thinking_args": ["-c", "model_reasoning_effort={thinking}"],
     "thinking": {"low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"},
     "schema_args": ["--output-schema", "{schema_file}"],
-    # `--sandbox read-only` still lets the model run (read-only) shell commands; these
-    # feature switches remove the shell tools.
-    "no_tools_args": ["--disable", "shell_tool", "--disable", "unified_exec"],
+    # The shell tool stays on: `--sandbox read-only` (part of the command) lets it read any
+    # file and write nothing (verified 2026-10-26 on codex-cli 0.163.0 with real runs from
+    # the sandbox). Figures: codex has no PDF viewer; it falls back to `pdftotext`.
+    "tools_args": [],
     "isolation_args": ["--ignore-user-config", "--ignore-rules"],
     # codex injects $CODEX_HOME/AGENTS.md whatever the flags; nothing turns it off.
     "suppress_global": False,
@@ -186,6 +202,25 @@ def runner_default(name: str) -> RunnerCliConfig:
     return RunnerCliConfig.model_validate(copy.deepcopy(RUNNER_DEFAULTS[name]))
 
 
+def _strip_legacy_no_tools(name: str, command: list[Any]) -> list[Any]:
+    """`command` without the pre-2026-10-26 tool switches: claude's `--tools ""` pair and
+    codex's `--disable shell_tool` / `--disable unified_exec` pairs."""
+    out: list[Any] = []
+    index = 0
+    while index < len(command):
+        arg = command[index]
+        following = command[index + 1] if index + 1 < len(command) else None
+        if name == "claude" and (arg, following) == LEGACY_CLAUDE_NO_TOOLS:
+            index += 2
+            continue
+        if name == "codex" and arg == "--disable" and following in LEGACY_CODEX_NO_TOOLS:
+            index += 2
+            continue
+        out.append(arg)
+        index += 1
+    return out
+
+
 class RunnerConfig(_Section):
     default: RunnerName = "claude"
     concurrency: int = Field(default=3, ge=1, le=16)
@@ -207,13 +242,21 @@ class RunnerConfig(_Section):
         The instruction-discovery boundary (audit 2026-10-18 item 7) is filled in the same
         way: a codex command that does not set one of CODEX_CONTEXT_OPTIONS gets
         `-c <key>=<value>` appended (set the key to another value to opt out), and claude's
-        phase-4 `isolation_args` (`--setting-sources project`) become the current default."""
+        phase-4 `isolation_args` (`--setting-sources project`) become the current default.
+
+        Tools (2026-10-26): the legacy `no_tools_args` key is dropped, claude's `--tools ""`
+        is removed from the command and codex's `--disable shell_tool` / `unified_exec`
+        pairs are removed wherever they appear, so older configs get `tools_args`."""
         if not isinstance(data, dict):
             return data
         data = dict(data)
         for name, defaults in RUNNER_DEFAULTS.items():
             table = data.get(name)
             if isinstance(table, dict):
+                table = dict(table)
+                table.pop(LEGACY_NO_TOOLS_KEY, None)
+                if isinstance(table.get("command"), list):
+                    table["command"] = _strip_legacy_no_tools(name, table["command"])
                 data[name] = {**copy.deepcopy(defaults), **table}
         codex = data.get("codex")
         if isinstance(codex, dict) and isinstance(codex.get("command"), list):
@@ -291,14 +334,20 @@ timeout_s = 1200           # a run is killed after this many seconds
 allow_api_keys = false
 
 # Each run is `command` + the optional groups below. A group is used only if the
-# installed CLI's --help lists its flags; `no_tools_args` is always used.
-# Placeholders: {{thinking}} (mapped level), {{schema}} (JSON text), {{schema_file}} (path).
-# The prompt always goes in on stdin; cwd is .rewrite/sandbox/.
+# installed CLI's --help lists its flags; `tools_args` is always used.
+# Placeholders: {{thinking}} (mapped level), {{schema}} (JSON text), {{schema_file}} (path),
+# {{repo}} (the paper repo's absolute path).
+# The prompt always goes in on stdin; cwd is .rewrite/sandbox/. A run may read the paper
+# repo (sources, figures, bibliography) with the tools below, and never writes: the app
+# kills a run that tries to.
 
 [runner.claude]
 # Verified 2026-10-18 against claude 2.1.302 (`claude --help` and real runs):
-# --tools "" leaves only the StructuredOutput tool that --json-schema adds;
 # --strict-mcp-config drops MCP servers. --bare is not used: it skips OAuth login.
+# Tools verified 2026-10-26 on claude 2.1.310: --tools Read,Glob,Grep keeps only the
+# read-only file tools (plus the StructuredOutput tool --json-schema adds) and
+# --allowedTools lets them run on any path without a prompt, so the paper repo above the
+# sandbox is readable; Read renders figure PDFs as images. No Write, Edit or Bash.
 # Re-verified 2026-10-18 on claude 2.1.303 (local /context and the request sent to a
 # local capture server, no model call): --setting-sources project loads every CLAUDE.md
 # and .claude/CLAUDE.md from the sandbox up to / -- the paper root's too -- so the run
@@ -306,13 +355,13 @@ allow_api_keys = false
 # or user (~/.claude/CLAUDE.md) memory; the sandbox CLAUDE.md is dropped too, which is
 # fine: the prompt itself starts with system.md. Settings files are read from the cwd
 # only. A managed (system-wide) CLAUDE.md, if your machine has one, cannot be turned off.
-command = ["claude", "-p", "--output-format", "stream-json", "--verbose", "--tools", "", \
+command = ["claude", "-p", "--output-format", "stream-json", "--verbose", \
 "--no-session-persistence"]
 model_flag = "--model"
 thinking_args = ["--effort", "{{thinking}}"]
 thinking = {{ low = "low", medium = "medium", high = "high", xhigh = "xhigh", max = "max" }}
 schema_args = ["--json-schema", "{{schema}}"]
-no_tools_args = []
+tools_args = ["--tools", "Read,Glob,Grep", "--allowedTools", "Read,Glob,Grep"]
 isolation_args = ["--setting-sources", "", "--strict-mcp-config"]
 suppress_global = true     # the global CLAUDE.md is not loaded with isolation_args
 stream_args = ["--include-partial-messages"]
@@ -320,9 +369,11 @@ models = ["opus", "sonnet", "haiku"]
 
 [runner.codex]
 # Verified 2026-10-18 against codex-cli 0.162.1 (`codex exec --help` and real runs):
-# --sandbox read-only still allows read-only shell commands; the --disable switches
-# remove the shell tools. --ignore-user-config skips ~/.codex/config.toml (its model and
-# effort too); --ignore-rules skips execpolicy .rules files. Neither, nor any other
+# --sandbox read-only lets the shell tool read any file and write nothing (re-verified
+# 2026-10-26 on codex-cli 0.163.0: the model reads the paper with cat/python and extracts
+# figure text with pdftotext; it has no PDF viewer). --ignore-user-config skips
+# ~/.codex/config.toml (its model and effort too); --ignore-rules skips execpolicy .rules
+# files. Neither, nor any other
 # flag, stops codex from injecting $CODEX_HOME/AGENTS.md (checked with
 # `codex debug prompt-input`), so suppress_global is false.
 # Re-verified 2026-10-18 on codex-cli 0.163.0 (`codex debug prompt-input` and the request
@@ -340,7 +391,7 @@ model_flag = "-m"
 thinking_args = ["-c", "model_reasoning_effort={{thinking}}"]
 thinking = {{ low = "low", medium = "medium", high = "high", xhigh = "xhigh", max = "max" }}
 schema_args = ["--output-schema", "{{schema_file}}"]
-no_tools_args = ["--disable", "shell_tool", "--disable", "unified_exec"]
+tools_args = []
 isolation_args = ["--ignore-user-config", "--ignore-rules"]
 suppress_global = false
 stream_args = []

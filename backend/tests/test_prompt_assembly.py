@@ -4,6 +4,7 @@ stripping, source numbering, scope resolution and prompt assembly."""
 from __future__ import annotations
 
 import os
+import shutil
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -27,7 +28,7 @@ from app.prompts import (
 )
 from app.repo import Repo, init_repo, sandbox_text
 from app.spec import Anchor, Node, PaperSpec, empty_fields, load_spec
-from tests.conftest import adopt_intro, make_client
+from tests.conftest import FIXTURES, adopt_intro, make_client
 
 GOOD = """---
 name: demo
@@ -389,6 +390,38 @@ def test_assemble_prompt(client: TestClient, initialized_repo: Path) -> None:
     assert render_outline(_repo_spec(initialized_repo)) in prompt
 
 
+def test_paper_files_block_and_tree_hash(client: TestClient, initialized_repo: Path) -> None:
+    """Read-only tools (2026-10-26): every prompt ends with the paper's path and file list,
+    and the cache key covers every paper file, not only the scoped source."""
+    section_id, _ = adopt_intro(client)
+    repo = Repo.at(initialized_repo)
+    scope = Scope(kind="section", ref=section_id)
+    figures = initialized_repo / "figures"
+    figures.mkdir()
+    shutil.copy(FIXTURES / "figures" / "plot.pdf", figures / "pipeline.pdf")
+    (initialized_repo / "main.aux").write_text("by-product\n")
+    (initialized_repo / ".hidden.tex").write_text("hidden\n")
+    assembled = assemble_prompt(repo, "paragraph-function", scope)
+    files = prompts.paper_files(repo.root)
+    assert "figures/pipeline.pdf" in files and "main.tex" in files
+    assert "main.aux" not in files and ".hidden.tex" not in files
+    assert not any(rel.startswith(".rewrite") for rel in files)
+    tail = assembled.prompt.split(prompts.PAPER_FILES_HEADING, 1)[1]
+    assert f"`{repo.root}`" in tail and "`main.tex`" in tail
+    assert "- figures/pipeline.pdf" in tail and "- main.tex" in tail
+    assert assembled.prompt.rstrip("\n").endswith(files[-1]) or "rendered as a PNG" in tail
+    # the PDF was rendered (app/figures.py) and the block maps it to the image
+    png = ".rewrite/build/figures/figures/pipeline.png"
+    assert f"- figures/pipeline.pdf → {png}" in tail
+    assert (initialized_repo / png).read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+    before = assembled.cache_key("claude", "sonnet", "low")
+    assert assembled.tree_hash == prompts.repo_tree_hash(repo.root)
+    (figures / "pipeline.pdf").write_bytes(b"%PDF-1.4 changed\n")  # not in the scoped source
+    after = assemble_prompt(repo, "paragraph-function", scope)
+    assert after.scope_hash == assembled.scope_hash
+    assert after.cache_key("claude", "sonnet", "low") != before
+
+
 def test_cache_key_inputs(client: TestClient, initialized_repo: Path) -> None:
     section_id, _ = adopt_intro(client)
     repo = Repo.at(initialized_repo)
@@ -404,10 +437,17 @@ def test_cache_key_inputs(client: TestClient, initialized_repo: Path) -> None:
     intro.write_text(intro.read_text().replace("bill tenants", "charge tenants"))
     edited = key()
     assert edited != base
-    # an edit outside the scope does not change the key
+    # an edit outside the scope changes the key too since 2026-10-26: the run may read any
+    # paper file (tree hash), although the scoped source itself is unchanged
     method = initialized_repo / "sections" / "method.tex"
     method.write_text(method.read_text() + "\n% a comment\n")
-    assert key() == edited
+    outside = key()
+    assert outside != edited
+    assert (
+        assemble_prompt(repo, "paragraph-function", scope).scope_hash
+        == assemble_prompt(repo, "paragraph-function", scope).scope_hash
+    )
+    edited = outside
     client.post("/api/spec/ops", json={"op": {"type": "update", "id": section_id, "says": "x"}})
     after_spec = key()
     assert after_spec != edited

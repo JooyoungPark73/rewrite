@@ -1,0 +1,12 @@
+\documentclass{standalone}
+\usepackage{tikz}
+\begin{document}
+\begin{tikzpicture}
+\draw[->] (0,0) -- (5,0) node[right] {latency (ms)};
+\draw[->] (0,0) -- (0,3) node[above] {throughput};
+\draw[thick,blue] (0.5,0.5) -- (2,2.4) -- (4.5,2.6);
+\node[blue] at (3,1.2) {warm pool};
+\draw[thick,red,dashed] (0.5,0.3) -- (4.5,0.9);
+\node[red] at (3,0.4) {cold start};
+\end{tikzpicture}
+\end{document}

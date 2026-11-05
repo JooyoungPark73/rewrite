@@ -466,7 +466,7 @@ class RunManager:
                     "auth": auth.model_dump() if auth is not None else None,
                     "warning": auth_warning(name, auth),
                     "flags": optional,
-                    "missing_flags": probe.missing([*cli.command, *cli.no_tools_args])
+                    "missing_flags": probe.missing([*cli.command, *cli.tools_args])
                     if probe.available and probe.flags
                     else [],
                 }
@@ -564,6 +564,7 @@ class RunManager:
             repo.sandbox_dir,
             config.runner.timeout_s,
             allow_api_keys=config.runner.allow_api_keys,
+            repo_root=repo.root,
         )
         answer_schema = None if free_text else (schema if schema is not None else findings_schema())
         command = runner_obj.command(chosen_model, chosen_thinking, schema=answer_schema)
@@ -857,6 +858,7 @@ class RunManager:
                     repo.sandbox_dir,
                     plan.config.runner.timeout_s,
                     allow_api_keys=plan.config.runner.allow_api_keys,
+                    repo_root=repo.root,
                 )
                 result = await runner.run(
                     plan.assembled.prompt,

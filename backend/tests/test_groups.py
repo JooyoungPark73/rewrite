@@ -359,7 +359,8 @@ def test_fanout_member_set(client: TestClient, initialized_repo: Path, tmp_path:
     assert "Serverless platforms hide cold-start latency" in drift_prompt
     assert "=== file: sections/intro.tex" in drift_prompt
     assert "=== file: sections/conclusion.tex" in drift_prompt
-    assert "sections/method.tex" not in drift_prompt.split("### Source", 1)[1]
+    source_part = drift_prompt.split("### Source", 1)[1].split("## Paper files", 1)[0]
+    assert "sections/method.tex" not in source_part  # (the file list after it names it)
     assert "We replay a 24-hour trace" not in drift_prompt
     assert "\\author{[removed]}" not in drift_prompt  # the abstract only, not the title block
 

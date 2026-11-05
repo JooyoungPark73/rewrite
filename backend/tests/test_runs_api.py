@@ -91,10 +91,11 @@ def claude_lines(
     text: str | None = None,
     structured: bool = True,
     tools: list[str] | None = None,
+    tool_call: str | None = None,  # a tool_use block (by name) before the answer
     cost: float = 0.0123,
 ) -> list[str]:
     answer = text if text is not None else json.dumps(payload)
-    events = [
+    events: list[dict[str, Any]] = [
         {
             "type": "system",
             "subtype": "init",
@@ -102,6 +103,11 @@ def claude_lines(
             "tools": tools if tools is not None else (["StructuredOutput"] if structured else []),
             "claude_code_version": "2.1.302",
         },
+    ]
+    if tool_call is not None:
+        call = {"type": "tool_use", "name": tool_call, "input": {"file_path": "main.tex"}}
+        events.append({"type": "assistant", "message": {"content": [call]}})
+    events += [
         {"type": "assistant", "message": {"content": [{"type": "text", "text": answer}]}},
         {
             "type": "result",
@@ -466,9 +472,8 @@ def test_codex_run(env: tuple[TestClient, Fakes, str, list[str]]) -> None:
     assert json.loads(call["schema"]) == findings_schema()  # --output-schema file
     argv = call["argv"]
     assert argv[1:3] == ["exec", "--json"] and "model_reasoning_effort=low" in argv
-    assert ["--disable", "shell_tool"] == argv[
-        argv.index("--disable") : argv.index("--disable") + 2
-    ]
+    assert "--disable" not in argv  # the shell tool stays on (read-only tools, 2026-10-26)
+    assert argv[argv.index("--sandbox") + 1] == "read-only"
     command = client.get(f"/api/runs/{run['id']}/prompt").json()["command"]
     assert command[command.index("--output-schema") + 1].endswith("findings.schema.json")
 
@@ -650,7 +655,10 @@ def test_cancel_a_queued_run(env: tuple[TestClient, Fakes, str, list[str]]) -> N
             {"lines": claude_lines(text="Overall this is a fine paper.", structured=False)},
             "could not parse findings",
         ),
-        ({"lines": claude_lines(tools=["Bash", "Write"]), "sleep": 5}, "tools enabled"),
+        (
+            {"lines": claude_lines(tools=["Read", "Write"], tool_call="Write"), "sleep": 5},
+            "tried to write (Write)",
+        ),
     ],
 )
 def test_failed_runs(
