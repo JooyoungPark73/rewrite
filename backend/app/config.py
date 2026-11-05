@@ -289,14 +289,23 @@ def _level(model: str, thinking: Thinking) -> LevelModel:
     return LevelModel(runner="claude", model=model, thinking=thinking)
 
 
+# Revise's rewrite proposals (decided 2026-11-05 by the author): codex, gpt-6-astra, medium.
+REWRITE_DEFAULT: dict[str, Any] = {"runner": "codex", "model": "gpt-6-astra", "thinking": "medium"}
+
+
 class ModelsConfig(_Section):
-    """Model tiering by pass level (PLAN.md "Prompt templates")."""
+    """Model tiering by pass level (PLAN.md "Prompt templates").
+
+    `rewrite` is not a level: it is the default for Revise's rewrite proposals ("Rewrite…"
+    on a finding card), which would otherwise take the `sentence` level's model. A config
+    written before it existed gets REWRITE_DEFAULT when loaded."""
 
     message: LevelModel = Field(default_factory=lambda: _level("opus", "high"))
     claim: LevelModel = Field(default_factory=lambda: _level("opus", "high"))
     section: LevelModel = Field(default_factory=lambda: _level("opus", "high"))
     paragraph: LevelModel = Field(default_factory=lambda: _level("sonnet", "medium"))
     sentence: LevelModel = Field(default_factory=lambda: _level("sonnet", "low"))
+    rewrite: LevelModel = Field(default_factory=lambda: LevelModel(**REWRITE_DEFAULT))
 
     def for_level(self, level: str) -> LevelModel:
         value = getattr(self, level, None)
@@ -409,6 +418,8 @@ claim = {{ runner = "claude", model = "opus", thinking = "high" }}
 section = {{ runner = "claude", model = "opus", thinking = "high" }}
 paragraph = {{ runner = "claude", model = "sonnet", thinking = "medium" }}
 sentence = {{ runner = "claude", model = "sonnet", thinking = "low" }}
+# Not a level: the default for Revise's rewrite proposals ("Rewrite…" on a finding card).
+rewrite = {{ runner = "codex", model = "gpt-6-astra", thinking = "medium" }}
 """
 
 

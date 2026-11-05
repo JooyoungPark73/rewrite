@@ -90,6 +90,14 @@ the paper. Co-authors accept by removing a wrapper and its `% aigen-was:` line (
 here); `latex-hygiene` reports any left before submission, and the commented-out
 `\renewcommand{\aigen}[1]{#1}` in the preamble renders them all as plain text for a clean build.
 
+**Edit…** on one of your own comment cards reopens the comment box with its text; saving
+changes the text and keeps the span, so the next **Rewrite…** sends the new wording. A pass's
+findings cannot be edited: they stay as the run wrote them. The Rewrite dialog proposes with
+`[models] rewrite` from `.rewrite/config.toml` unless you pick otherwise: codex, `gpt-6-astra`,
+medium thinking by default (a paper initialised earlier gets it too; add the line to choose
+another). The runner, model and thinking you pick are remembered in the browser for the next
+rewrite; choosing "default (…)" again goes back to the config's.
+
 ## While writing
 
 1. **Spec before prose, one level at a time.** Fill the message card first (the takeaway,

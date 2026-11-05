@@ -8,6 +8,9 @@
 // original kept on a "% aigen-was:" line, marks the finding addressed, and the paragraph
 // turns stale for re-reading. Co-authors accept by removing the wrapper (in Overleaf or
 // here); the header counts the wrappers still in the paper.
+//
+// 2026-11-05: "Edit…" on a comment's card reopens the comment box with its text; saving
+// sends PATCH /api/findings/{id}/comment (only the author's own comments are editable).
 import { create } from 'zustand'
 import * as api from '../api/client'
 import type { Finding, Outstanding, Revision, RevisionDetail, RevisionSpan, ServerEvent } from '../api/client'
@@ -21,6 +24,8 @@ export interface CommentTarget {
   lineEnd: number
   quote: string
   nodeId: string | null
+  /** Set when the box edits an existing comment instead of adding one. */
+  edit?: { findingId: string; problem: string; why: string }
 }
 
 export interface ReviseState {
@@ -39,6 +44,8 @@ export interface ReviseState {
   outstanding: Outstanding
 
   openComment: (target: CommentTarget) => void
+  /** Reopen the comment box on one of the author's comments, to change its text. */
+  openEditComment: (finding: Finding) => void
   closeComment: () => void
   submitComment: (problem: string, why: string) => Promise<Finding | null>
 
@@ -101,6 +108,18 @@ export const useReviseStore = create<ReviseState>()((set, get) => {
     outstanding: { count: 0, by_file: {} },
 
     openComment: (target) => set({ commentTarget: target, commentError: null }),
+    openEditComment: (finding) =>
+      set({
+        commentTarget: {
+          file: finding.file,
+          lineStart: finding.anchor_line_start,
+          lineEnd: finding.anchor_line_end,
+          quote: finding.quote,
+          nodeId: finding.json_ref,
+          edit: { findingId: finding.id, problem: finding.problem, why: finding.why },
+        },
+        commentError: null,
+      }),
     closeComment: () => set({ commentTarget: null, commentError: null }),
     submitComment: async (problem, why) => {
       const target = get().commentTarget
@@ -111,6 +130,15 @@ export const useReviseStore = create<ReviseState>()((set, get) => {
       }
       set({ commentBusy: true, commentError: null })
       try {
+        if (target.edit) {
+          const finding = await api.editComment(target.edit.findingId, { problem: problem.trim(), why: why.trim() })
+          set({ commentTarget: null })
+          void useRunsStore.getState().loadFindings()
+          // The rewrite dialog may be showing this comment: show the new text there too.
+          if (get().finding?.id === finding.id) set({ finding })
+          useSpecStore.getState().showToast(`Comment on ${target.file}:${target.lineStart} updated.`, 'info')
+          return finding
+        }
         const finding = await api.addComment({
           file: target.file,
           line_start: target.lineStart,

@@ -14,6 +14,11 @@
 // paragraph, with the original kept on a "% aigen-was:" comment line above; main.tex gets
 // the macro if it lacks it; the finding is marked addressed; the paragraph turns stale.
 // An empty text drops the span. The run itself is an ordinary run (cancel from the run list).
+//
+// 2026-11-05: the runner / model / thinking pickers default to config.toml's
+// `[models] rewrite` (codex, gpt-6-astra, medium unless the paper sets another), and the
+// last picks are remembered in this browser (localStorage), so the next "Rewrite…" opens
+// with them. Picking "default (...)" again forgets that pick.
 import { useEffect, useMemo, useState } from 'react'
 import type { RevisionSpan } from '../api/client'
 import { formatTime } from '../findings/format'
@@ -21,6 +26,39 @@ import RunnerControls from '../findings/RunnerControls'
 import { isPending, useReviseStore } from '../state/revise'
 import { useRunsStore } from '../state/runs'
 import { wordDiff } from './wordDiff'
+
+/** The runner / model / thinking picked last time ('' = the default). */
+interface Picks {
+  runner: string
+  model: string
+  thinking: string
+}
+
+const PICKS_KEY = 'rewrite.revise.picks'
+
+function loadPicks(): Picks {
+  const none = { runner: '', model: '', thinking: '' }
+  try {
+    const saved: unknown = JSON.parse(localStorage.getItem(PICKS_KEY) ?? 'null')
+    if (!saved || typeof saved !== 'object') return none
+    const text = (key: keyof Picks) => {
+      const value = (saved as Record<string, unknown>)[key]
+      return typeof value === 'string' ? value : ''
+    }
+    return { runner: text('runner'), model: text('model'), thinking: text('thinking') }
+  } catch {
+    // Storage blocked (private window) or not JSON: start from the defaults.
+    return none
+  }
+}
+
+function savePicks(picks: Picks) {
+  try {
+    localStorage.setItem(PICKS_KEY, JSON.stringify(picks))
+  } catch {
+    // Storage blocked: the picks last until the dialog closes, as before.
+  }
+}
 
 export default function RevisionDialog() {
   const finding = useReviseStore((s) => s.finding)
@@ -38,11 +76,16 @@ export default function RevisionDialog() {
 
   const runners = useRunsStore((s) => s.runners)
   const loadRunners = useRunsStore((s) => s.loadRunners)
-  const levelDefaults = runners?.defaults.sentence
+  // `rewrite` is config.toml's `[models] rewrite`; an older backend only has the levels.
+  const levelDefaults = runners?.defaults.rewrite ?? runners?.defaults.sentence
   const [span, setSpan] = useState<RevisionSpan>('quote')
-  const [runner, setRunner] = useState('')
-  const [model, setModel] = useState('')
-  const [thinking, setThinking] = useState('')
+  const [picks, setPicks] = useState<Picks>(loadPicks)
+  const { runner, model, thinking } = picks
+  const pick = (change: Partial<Picks>) => {
+    const next = { ...picks, ...change }
+    setPicks(next)
+    savePicks(next)
+  }
   const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!runners) void loadRunners()
@@ -110,14 +153,15 @@ export default function RevisionDialog() {
           <RunnerControls
             runners={runners}
             levelDefaults={levelDefaults}
-            defaultModel={levelDefaults?.model ?? null}
+            // The default model belongs to the default runner; another runner uses its CLI's own.
+            defaultModel={!runner || runner === levelDefaults?.runner ? (levelDefaults?.model ?? null) : null}
             defaultThinking={levelDefaults?.thinking ?? null}
             runner={runner}
-            onRunner={setRunner}
+            onRunner={(value) => pick({ runner: value })}
             model={model}
-            onModel={setModel}
+            onModel={(value) => pick({ model: value })}
             thinking={thinking}
-            onThinking={setThinking}
+            onThinking={(value) => pick({ thinking: value })}
             testIdPrefix="revision-"
             listId="revision-model-suggestions"
           />

@@ -57,6 +57,7 @@ from app.config import (
     THINKING_LEVELS,
     Config,
     ConfigError,
+    LevelModel,
     RunnerCliConfig,
 )
 from app.events import (
@@ -482,8 +483,9 @@ class RunManager:
                 ).command(None, None)
                 leaks += [leak.model_dump() for leak in context_leaks(sandbox, name, argv)]
         defaults = {}
-        for level in PASS_LEVELS:
-            entry = config.models.for_level(level)
+        # The levels, then Revise's rewrite default (not a level; `[models] rewrite`).
+        for level in (*PASS_LEVELS, "rewrite"):
+            entry = config.models.rewrite if level == "rewrite" else config.models.for_level(level)
             defaults[level] = {
                 "runner": entry.runner or config.runner.default,
                 "model": entry.model or None,
@@ -534,12 +536,16 @@ class RunManager:
         scope_key_override: str | None = None,
         cacheable: bool = True,
         free_text: bool = False,
+        level_default: LevelModel | None = None,
     ) -> RunPlan:
         """Settle runner, model, thinking, argv and cache key for an assembled prompt (the
         rules of `plan`). `schema` replaces the findings schema; `cacheable=False` gives the
-        plan no cache key, so it is never served from or stored into the cache."""
+        plan no cache key, so it is never served from or stored into the cache.
+        `level_default` replaces the `[models]` entry of the pass's level (Revise passes
+        `[models] rewrite`)."""
         info = assembled.pass_def.info
-        level_default = config.models.for_level(info.level)
+        if level_default is None:
+            level_default = config.models.for_level(info.level)
         default_runner = level_default.runner or config.runner.default
         chosen = runner or default_runner
         if chosen not in RUNNER_NAMES:

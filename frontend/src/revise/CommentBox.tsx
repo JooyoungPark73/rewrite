@@ -3,26 +3,36 @@
 // Findings column with a "comment" badge, the highlight in the editor, re-anchoring and
 // the open / addressed / dismissed states, and "Rewrite…" on the card asks a model for a
 // change that answers it.
+//
+// "Edit…" on a comment's card opens the same box with the comment's text (the store's
+// `commentTarget.edit`); saving sends PATCH /api/findings/{id}/comment. The span and the
+// anchor stay; only the text changes.
 import { useState } from 'react'
-import { useReviseStore } from '../state/revise'
+import { useReviseStore, type CommentTarget } from '../state/revise'
 
 export default function CommentBox() {
   const target = useReviseStore((s) => s.commentTarget)
+  if (!target) return null
+  // A new key per comment: the form's fields start from that comment's text every time.
+  return <CommentForm key={target.edit?.findingId ?? 'new'} target={target} />
+}
+
+function CommentForm({ target }: { target: CommentTarget }) {
   const busy = useReviseStore((s) => s.commentBusy)
   const error = useReviseStore((s) => s.commentError)
   const submit = useReviseStore((s) => s.submitComment)
   const close = useReviseStore((s) => s.closeComment)
-  const [problem, setProblem] = useState('')
-  const [why, setWhy] = useState('')
-  if (!target) return null
+  const [problem, setProblem] = useState(target.edit?.problem ?? '')
+  const [why, setWhy] = useState(target.edit?.why ?? '')
+  const editing = !!target.edit
   const where = `${target.file}:${target.lineStart}${target.lineEnd !== target.lineStart ? `-${target.lineEnd}` : ''}`
   return (
     <div className="modal modal-open" role="dialog" aria-modal="true" aria-labelledby="comment-title">
-      <div className="modal-box flex w-11/12 max-w-2xl flex-col gap-3" data-native-undo data-testid="comment-box">
+      <div className="modal-box flex w-11/12 max-w-2xl flex-col gap-3" data-native-undo data-testid="comment-box" data-editing={editing ? 'true' : undefined}>
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <h3 id="comment-title" className="text-lg font-bold">
-              Comment on {where}
+              {editing ? 'Edit comment' : 'Comment'} on {where}
             </h3>
             <p className="line-clamp-3 text-sm text-base-content/70" title={target.quote} data-testid="comment-quote">
               “{target.quote}”
@@ -71,7 +81,7 @@ export default function CommentBox() {
             </button>
             <button type="submit" className="btn btn-sm btn-primary" disabled={busy || !problem.trim()} data-testid="comment-submit">
               {busy && <span className="loading loading-xs loading-spinner" />}
-              Add comment
+              {editing ? 'Save comment' : 'Add comment'}
             </button>
           </div>
         </form>

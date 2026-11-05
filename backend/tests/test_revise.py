@@ -3,6 +3,7 @@ apply with `\\aigen{...}` wrappers and the `% aigen-was:` line, the preamble, ou
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -15,7 +16,7 @@ from app.repo import Repo
 from app.revise import _find_collapsed, _wrap, count_outstanding, parse_rewrite
 from app.runner import RunResult
 from tests.conftest import adopt_intro
-from tests.test_runs_api import Fakes, claude_lines
+from tests.test_runs_api import Fakes, claude_lines, start, wait_run
 
 INTRO = "sections/intro.tex"
 QUOTE = (
@@ -352,3 +353,68 @@ def test_count_outstanding_ignores_comments(initialized_repo: Path) -> None:
     path = initialized_repo / INTRO
     path.write_text(path.read_text() + "\n\\aigen{a} % \\aigen{commented}\n\\aigen{b}\n")
     assert count_outstanding(repo).by_file == {INTRO: 2}
+
+
+# --------------------------------------------------------------------------- 2026-11-05
+
+
+def codex_text(text: str) -> list[str]:
+    """Fake codex events whose final message is free text (a rewrite answer)."""
+    events = [
+        {"type": "thread.started", "thread_id": "t"},
+        {"type": "turn.started"},
+        {"type": "item.completed", "item": {"id": "i1", "type": "agent_message", "text": text}},
+        {"type": "turn.completed", "usage": {"input_tokens": 900, "output_tokens": 40}},
+    ]
+    return [json.dumps(event) for event in events]
+
+
+def test_edit_comment_changes_only_its_text(env: Env) -> None:
+    finding = env.comment()
+    url = f"/api/findings/{finding['id']}/comment"
+    edited = ok(env.client.patch(url, json={"problem": "  Cut the clause. ", "why": " Long. "}))
+    edited = edited["finding"]
+    assert (edited["problem"], edited["why"]) == ("Cut the clause.", "Long.")
+    for key in ("id", "file", "quote", "anchor_line_start", "anchor_line_end", "state", "json_ref"):
+        assert edited[key] == finding[key], key
+    listed = ok(env.client.get("/api/findings", params={"file": INTRO}))["findings"]
+    assert next(f for f in listed if f["id"] == finding["id"])["problem"] == "Cut the clause."
+    # The next rewrite sends the new text.
+    assert env.wait(env.start(finding["id"])["id"])["revision"]["status"] == "done"
+    prompt = env.fakes.calls("claude")[-1]["prompt"]
+    assert "Cut the clause." in prompt and "Too verbose; say it in one clause." not in prompt
+    # Errors: empty text, a key that is not the comment's text, unknown finding.
+    assert env.client.patch(url, json={"problem": "  "}).status_code == 400
+    assert env.client.patch(url, json={"problem": "x", "quote": "y"}).status_code == 400
+    assert env.client.patch("/api/findings/nope/comment", json={"problem": "x"}).status_code == 404
+
+
+def test_model_findings_cannot_be_edited(env: Env) -> None:
+    env.fakes.set("claude", lines=claude_lines())
+    detail = wait_run(env.client, start(env.client, env.section_id)["id"])
+    assert detail["run"]["status"] == "done" and detail["findings"]
+    model_finding = detail["findings"][0]
+    res = env.client.patch(f"/api/findings/{model_finding['id']}/comment", json={"problem": "x"})
+    assert res.status_code == 400 and "model finding" in res.json()["detail"]
+    after = ok(env.client.get("/api/findings", params={"run_id": detail["run"]["id"]}))
+    assert after["findings"][0]["problem"] == model_finding["problem"]
+
+
+def test_rewrite_defaults_to_codex_gpt_6_astra_medium(env: Env) -> None:
+    env.fakes.set("codex", lines=codex_text(answer(REWRITE_TEX)))
+    finding = env.comment()
+    revision = ok(env.client.post("/api/revisions", json={"finding_id": finding["id"]}))
+    detail = env.wait(revision["revision"]["id"])
+    run = detail["run"]
+    assert (run["runner"], run["model"], run["thinking"]) == ("codex", "gpt-6-astra", "medium")
+    assert detail["revision"]["status"] == "done" and detail["revision"]["text"] == REWRITE_TEX
+    argv = env.fakes.calls("codex")[-1]["argv"]
+    assert argv[argv.index("-m") + 1] == "gpt-6-astra"
+    assert "model_reasoning_effort=medium" in argv
+    # The dialog's "default (...)" labels come from GET /api/runners.
+    defaults = ok(env.client.get("/api/runners"))["defaults"]
+    assert defaults["rewrite"] == {"runner": "codex", "model": "gpt-6-astra", "thinking": "medium"}
+    assert defaults["sentence"]["runner"] == "claude"  # review passes keep their defaults
+    # Another runner without a model: that CLI's own default model, as for review passes.
+    other = env.wait(env.start(finding["id"], model=None, thinking=None)["id"])["run"]
+    assert (other["runner"], other["model"], other["thinking"]) == ("claude", None, "medium")

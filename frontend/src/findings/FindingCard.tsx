@@ -17,6 +17,10 @@
 // green, wrong red, trivial grey). Hovering shows the model's reason; a click
 // on the badge unfolds it under the card. The verdict never changes the
 // finding's state by itself.
+//
+// 2026-11-05: the author's own comments (the "comment" badge) also have "Edit…",
+// which reopens the comment box with their text. Model findings stay as the run
+// wrote them.
 import { useEffect, useRef, useState, type MouseEvent } from 'react'
 import { FINDING_LEVELS, type Finding, type FindingState } from '../api/client'
 import { VERDICT_STYLE } from '../state/groups'
@@ -145,6 +149,20 @@ export default function FindingCard({ finding, selected, onOpen, showFile = true
           </button>
         )}
         <span className="ml-auto flex gap-1">
+          {finding.category === 'comment' && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-xs"
+              onClick={(e) => {
+                e.stopPropagation()
+                useReviseStore.getState().openEditComment(finding)
+              }}
+              title="Change the text of your comment (the span stays)"
+              data-testid="finding-edit-comment"
+            >
+              Edit…
+            </button>
+          )}
           {/* Phase 8 (Revise): a model proposes a rewrite for the quoted span or the paragraph. */}
           <button
             type="button"

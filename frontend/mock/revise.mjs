@@ -1,6 +1,8 @@
 // In-memory version of the phase 8 API (Revise):
 //   POST /api/findings/comment {file, line_start, line_end, quote, problem, why?, json_ref?}
 //        -> {finding}: a finding of a new "author" run (pass "comment", done).
+//   PATCH /api/findings/{id}/comment {problem, why?} -> {finding}: new text for an author
+//        comment; 400 for a model finding or an empty text.
 //   POST /api/revisions {finding_id, span?, runner?, model?, thinking?} -> {revision}; done after
 //        `duration_ms` (default 400; POST /__mock/revise-config) with a canned rewrite.
 //   GET  /api/revisions?finding_id=  GET /api/revisions/outstanding  GET /api/revisions/{id}
@@ -68,6 +70,19 @@ export function createReviseApi(ctx) {
     run.end('done', '', { input_tokens: 0, output_tokens: 0, cost_usd: null })
     ctx.broadcast({ type: 'findings.updated', run_id: run.run().id, file })
     return finding
+  }
+
+  function editComment(id, body) {
+    const finding = ctx.runs.findingById(id)
+    if (!finding) throw err(404, `unknown finding "${id}"`)
+    if (ctx.runs.record(finding.run_id)?.run.runner !== 'author') {
+      throw err(400, 'only your own comments can be edited; a model finding stays as the run wrote it')
+    }
+    const problem = String(body?.problem ?? '').trim()
+    if (!problem) throw err(400, 'the comment is empty')
+    const updated = ctx.runs.setFindingText(id, problem, String(body?.why ?? '').trim())
+    ctx.broadcast({ type: 'findings.updated', run_id: finding.run_id, file: finding.file })
+    return updated
   }
 
   /** The span a rewrite replaces, as the file reads now. */
@@ -199,6 +214,12 @@ export function createReviseApi(ctx) {
           state.log.push({ method: 'POST', path: url.pathname, body })
           return send(200, { finding: comment(body) })
         }
+        const edit = url.pathname.match(/^\/api\/findings\/([^/]+)\/comment$/)
+        if (edit && req.method === 'PATCH') {
+          const body = (await ctx.readBody(req)) ?? {}
+          state.log.push({ method: 'PATCH', path: url.pathname, body })
+          return send(200, { finding: editComment(decodeURIComponent(edit[1]), body) })
+        }
         if (route === 'POST /api/revisions') {
           const body = (await ctx.readBody(req)) ?? {}
           state.log.push({ method: 'POST', path: url.pathname, body })
@@ -230,5 +251,10 @@ export function createReviseApi(ctx) {
 }
 
 export function isRevisePath(pathname) {
-  return pathname === '/api/findings/comment' || pathname === '/api/revisions' || pathname.startsWith('/api/revisions/')
+  return (
+    pathname === '/api/findings/comment' ||
+    /^\/api\/findings\/[^/]+\/comment$/.test(pathname) ||
+    pathname === '/api/revisions' ||
+    pathname.startsWith('/api/revisions/')
+  )
 }

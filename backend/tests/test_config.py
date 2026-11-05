@@ -226,3 +226,14 @@ def test_explicit_context_settings_are_kept() -> None:
         "project_root_markers=[]",
     ]
 
+
+def test_rewrite_default_is_codex_astra_medium_even_for_older_configs() -> None:
+    expected = ("codex", "gpt-6-astra", "medium")
+    fresh = parse_config(default_config_text()).models.rewrite
+    assert (fresh.runner, fresh.model, fresh.thinking) == expected
+    # A config written before the key existed gets it when loaded.
+    older = parse_config('[models]\nsentence = { runner = "claude", model = "x" }\n')
+    assert (older.models.rewrite.runner, older.models.rewrite.model) == expected[:2]
+    # The paper may choose another one.
+    mine = parse_config('[models]\nrewrite = { runner = "claude", model = "opus" }\n')
+    assert (mine.models.rewrite.runner, mine.models.rewrite.model) == ("claude", "opus")

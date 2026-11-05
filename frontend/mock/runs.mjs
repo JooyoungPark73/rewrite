@@ -103,6 +103,8 @@ const RUNNERS = {
     section: { runner: 'claude', model: 'opus', thinking: 'high' },
     paragraph: { runner: 'claude', model: 'sonnet', thinking: 'medium' },
     sentence: { runner: 'claude', model: null, thinking: 'low' },
+    // Not a level: Revise's rewrite default (config.toml [models] rewrite).
+    rewrite: { runner: 'codex', model: 'gpt-6-astra', thinking: 'medium' },
   },
   global_instructions: [
     { runner: 'claude', path: '~/.claude/CLAUDE.md', present: true },
@@ -822,6 +824,12 @@ export function createRunsApi(ctx) {
     setFindingState: (id, value) => {
       const f = allFindings().find((x) => x.id === id)
       if (f) f.state = value
+    },
+    /** New text for a finding (mock/revise.mjs: editing an author comment). */
+    setFindingText: (id, problem, why) => {
+      const f = allFindings().find((x) => x.id === id)
+      if (f) Object.assign(f, { problem, why })
+      return f ? { ...f } : null
     },
     // Phase 6 helpers for mock/groups.mjs.
     createMember,

@@ -596,7 +596,10 @@ export interface LevelDefaults {
 export interface RunnersInfo {
   runners: RunnerInfo[]
   thinking_levels: string[]
-  /** Keyed by pass level ("message", "paragraph", ...). */
+  /**
+   * Keyed by pass level ("message", "paragraph", ...), plus "rewrite": the default for
+   * Revise's rewrite proposals (config.toml `[models] rewrite`, not a level).
+   */
   defaults: Record<string, LevelDefaults>
   /** Global instruction files (~/.claude/CLAUDE.md, ...) the CLIs may still read. */
   global_instructions: { runner: string; path: string; present: boolean }[]
@@ -1574,6 +1577,11 @@ export interface CommentRequest {
 
 export async function addComment(request: CommentRequest): Promise<Finding> {
   return (await sendJson<{ finding: Finding }>('POST', '/api/findings/comment', request)).finding
+}
+
+/** PATCH /api/findings/{id}/comment: new text for one of the author's own comments. */
+export async function editComment(id: string, edit: { problem: string; why: string }): Promise<Finding> {
+  return (await sendJson<{ finding: Finding }>('PATCH', `/api/findings/${encodeURIComponent(id)}/comment`, edit)).finding
 }
 
 export type RevisionSpan = 'quote' | 'paragraph'

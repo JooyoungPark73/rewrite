@@ -2,6 +2,9 @@
 
 POST /api/findings/comment {file, line_start, line_end, quote, problem, why?, json_ref?, severity?}
                                         → {finding}
+PATCH /api/findings/{id}/comment {problem, why?}
+                                        → {finding}   new text for an author comment; 400 for
+                                          a model finding or an empty comment, 404 unknown id
 POST /api/revisions {finding_id, span?, runner?, model?, thinking?} → {revision}
 GET  /api/revisions?finding_id=&limit=  → {revisions}
 GET  /api/revisions/outstanding          → {count, by_file}   (\\aigen{...} wrappers in the paper)
@@ -25,6 +28,7 @@ from app.findings import Finding
 from app.revise import (
     Applied,
     ApplyRequest,
+    CommentEdit,
     CommentRequest,
     Outstanding,
     ReviseError,
@@ -54,6 +58,7 @@ class RevisionsResponse(BaseModel):
 
 
 _COMMENT = TypeAdapter(CommentRequest)
+_COMMENT_EDIT = TypeAdapter(CommentEdit)
 _REQUEST = TypeAdapter(RevisionRequest)
 _APPLY = TypeAdapter(ApplyRequest)
 
@@ -70,6 +75,26 @@ async def post_comment(
         return JSONResponse(status_code=400, content={"detail": _describe(exc)})
     try:
         finding = await state.revise.comment(repo, request)
+    except ReviseError as exc:
+        return JSONResponse(status_code=exc.status, content={"detail": exc.detail})
+    return FindingResponse(finding=finding)
+
+
+@router.patch(
+    "/findings/{finding_id}/comment",
+    response_model=FindingResponse,
+    responses=ERRORS,
+    dependencies=[SameOrigin],
+)
+async def patch_comment(
+    finding_id: str, body: Annotated[dict[str, Any], Body()], repo: RepoDep, state: StateDep
+) -> FindingResponse | JSONResponse:
+    try:
+        edit = _COMMENT_EDIT.validate_python(body)
+    except ValidationError as exc:
+        return JSONResponse(status_code=400, content={"detail": _describe(exc)})
+    try:
+        finding = await state.revise.edit_comment(repo, finding_id, edit)
     except ReviseError as exc:
         return JSONResponse(status_code=exc.status, content={"detail": exc.detail})
     return FindingResponse(finding=finding)

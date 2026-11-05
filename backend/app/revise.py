@@ -199,6 +199,44 @@ def add_comment(repo: Repo, request: CommentRequest) -> findings.Finding:
     return finding
 
 
+class CommentEdit(BaseModel):
+    """PATCH /api/findings/{id}/comment: new text for an author comment (decided 2026-11-05).
+
+    Only the author's own comments are editable. A model finding is the record of a run
+    (its raw output and cache entry say what the model wrote), so it stays as written."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    problem: str
+    why: str = ""
+
+
+def edit_comment(repo: Repo, finding_id: str, edit: CommentEdit) -> findings.Finding:
+    """Replace the text (`problem`, `why`) of an author comment. The span, anchor and state
+    stay; a later "Rewrite…" sends the new text, earlier proposals keep theirs."""
+    problem = edit.problem.strip()
+    if not problem:
+        raise ReviseError(400, "the comment is empty")
+    with db.connect(repo) as conn:
+        finding = runstore.get_finding(conn, finding_id)
+        if finding is None:
+            raise ReviseError(404, f"unknown finding {finding_id!r}")
+        run = runstore.get_run(conn, finding.run_id)
+        if run is None or run.runner != AUTHOR:
+            raise ReviseError(
+                400,
+                "only your own comments can be edited; a model finding stays as the run wrote it",
+            )
+        with db.transaction(conn):
+            conn.execute(
+                "UPDATE findings SET problem = ?, why = ?, updated_at = ? WHERE id = ?",
+                (problem, edit.why.strip(), time.time(), finding_id),
+            )
+        updated = runstore.get_finding(conn, finding_id)
+    assert updated is not None
+    return updated
+
+
 # --------------------------------------------------------------------------- revisions
 
 
@@ -470,6 +508,7 @@ def prepare(repo: Repo, runs: RunManager, request: RevisionRequest) -> Prepared:
             scope_key_override=f"rewrite:{finding.id}",
             cacheable=False,
             free_text=True,
+            level_default=config.models.rewrite,
         )
     except (PromptError, ConfigError) as exc:
         raise ReviseError(400, str(exc)) from exc
@@ -673,6 +712,13 @@ class ReviseManager:
             await asyncio.to_thread(work)
         except Exception:
             log.exception("revision start-up work failed")
+
+    async def edit_comment(
+        self, repo: Repo, finding_id: str, edit: CommentEdit
+    ) -> findings.Finding:
+        finding = await asyncio.to_thread(edit_comment, repo, finding_id, edit)
+        self.bus.publish(FindingsUpdated(run_id=finding.run_id, file=finding.file))
+        return finding
 
     async def comment(self, repo: Repo, request: CommentRequest) -> findings.Finding:
         finding = await asyncio.to_thread(add_comment, repo, request)

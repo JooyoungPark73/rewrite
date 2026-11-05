@@ -10,6 +10,8 @@ Decided 2026-10-20: drafting is a separate activity from review. On request, for
 
 Decided 2026-10-20 as well: **Revise**. The author (or a model finding) marks a span with a comment; a model proposes a rewrite of that span or its paragraph (same drafting stack, `prompts/drafts/rewrite.md`); the author sees a word diff, edits, and approves. The approved text is written as `\aigen{...}` per paragraph with the original kept on a `% aigen-was:` comment line above, main.tex gets the macro, the finding is marked addressed, the paragraph turns stale. Co-authors accept by removing the wrapper (in Overleaf or here); `latex-hygiene` flags leftovers. Author comments are findings of a run with runner `author`, so they share the sidebar, anchors and states with model findings. The app now covers Write (drafting), Revise and Review.
 
+Decided 2026-11-05 for Revise: the author can edit the text (`problem`, `why`) of their own comments (`PATCH /api/findings/{id}/comment`; model findings stay as the run wrote them). Rewrite proposals default to `[models] rewrite` in `config.toml`, codex `gpt-6-astra` with medium thinking, instead of the `sentence` level's model; it is not a level, and a config without the key gets that default when loaded. The Rewrite dialog remembers the last runner, model and thinking in the browser's localStorage.
+
 Everything the app needs for a paper lives inside that paper's git repo under `.rewrite/`. Nothing is stored in user-scope or global directories.
 
 | Area | Decision |
@@ -207,7 +209,7 @@ Default pass set, coarse to fine:
 | latex-hygiene | sentence | undefined refs, missing bib keys, notation inconsistency | yes |
 | ab-compare | paragraph | blind comparison template | no |
 
-Model tiering lives in `config.toml` as one table keyed by level: a strong model with high thinking for message, claim and section passes; a cheap fast model for sentence passes. Any run can override it.
+Model tiering lives in `config.toml` as one table keyed by level: a strong model with high thinking for message, claim and section passes; a cheap fast model for sentence passes. Any run can override it. One more key, `rewrite`, is not a level: it is the default for Revise's rewrite proposals (decided 2026-11-05).
 
 ## Rule enforcement
 

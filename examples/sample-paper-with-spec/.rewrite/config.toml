@@ -93,3 +93,5 @@ claim = { runner = "claude", model = "opus", thinking = "high" }
 section = { runner = "claude", model = "opus", thinking = "high" }
 paragraph = { runner = "claude", model = "sonnet", thinking = "medium" }
 sentence = { runner = "claude", model = "sonnet", thinking = "low" }
+# Not a level: the default for Revise's rewrite proposals ("Rewrite…" on a finding card).
+rewrite = { runner = "codex", model = "gpt-6-astra", thinking = "medium" }
