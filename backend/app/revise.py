@@ -7,12 +7,19 @@ Two halves, both built on findings:
   text, so comments get the sidebar card, the highlight, re-anchoring and the states that
   model findings have.
 - A **revision** proposes a rewrite for one finding (a comment or a model finding): the
-  span it quotes, or the whole paragraph around it. The model answers in a fenced LaTeX block
-  (prompts/drafts/rewrite.md, the drafting stack); nothing is written by the call. `apply`
-  writes the author's approved text wrapped as `\\aigen{...}` (per paragraph), keeps the
-  original on a `% aigen-was:` comment line above it, makes sure main.tex defines the macro,
-  and marks the finding addressed. Co-authors accept by removing the wrapper (in Overleaf or
-  here). This module never writes the spec file (tests/test_invariants.py).
+  span it quotes, or every paragraph its lines touch. The model answers in a fenced LaTeX
+  block (prompts/drafts/rewrite.md, the drafting stack); nothing is written by the call.
+  `apply` writes the author's approved text wrapped as `\\aigen{...}` (per paragraph), keeps
+  the original on a `% aigen-was:` comment line above it, makes sure main.tex defines the
+  macro, and marks the finding addressed. Co-authors accept by removing the wrapper (in
+  Overleaf or here). This module never writes the spec file (tests/test_invariants.py).
+
+Since 2026-11-06 a span may run across paragraphs (the author's decision: transitions between
+paragraphs could not be rewritten one paragraph at a time). The `% @p` lines inside the span
+go to the model, which must return them as they are, in order (checked on the answer and
+again on apply); apply then treats each stretch between them on its own: one `% aigen-was:`
+line under its marker and `\\aigen{...}` around its new text, or the stretch untouched when
+the rewrite left it as it was. A span never crosses a section heading.
 """
 
 from __future__ import annotations
@@ -23,7 +30,7 @@ import re
 import secrets
 import sqlite3
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -303,9 +310,25 @@ class Outstanding(BaseModel):
 RewriteAnswer = DraftAnswer
 
 
-def parse_rewrite(result: RunResult) -> RunOutcome:
-    """One fenced block (possibly empty: drop the span) plus an optional `Notes:` line."""
-    return parse_fenced(result, "rewrite", "a span of one paragraph", allow_empty=True)
+def parse_rewrite(result: RunResult, span: Span | None = None) -> RunOutcome:
+    """One fenced block (possibly empty: drop the span) plus an optional `Notes:` line. For a
+    span across paragraphs the block must keep the span's `% @p` lines, in order, and leave
+    text under each (see `check_rewrite`)."""
+    markers = span.markers if span is not None else []
+    if not markers:
+        return parse_fenced(result, "rewrite", "a span of one paragraph", allow_empty=True)
+    outcome = parse_fenced(
+        result,
+        "rewrite",
+        "a span across paragraphs",
+        allow_empty=False,
+        allow_markers=True,
+    )
+    if outcome.status == "done" and isinstance(outcome.data, RewriteAnswer) and span is not None:
+        problem = check_rewrite(span, outcome.data.text)
+        if problem:
+            return RunOutcome(status="failed", error=f"rejected: {problem}")
+    return outcome
 
 
 def new_id() -> str:
@@ -369,6 +392,16 @@ class Span:
     char_start: int | None
     char_end: int | None
     original: str
+    # The ids of the `% @p` lines inside the span, in order (empty: the span is in one
+    # paragraph). The rewrite keeps each line where it is.
+    markers: list[str] = field(default_factory=list)
+    # How many paragraphs a whole-paragraph span covers (1 for a quote span).
+    paragraphs: int = 1
+    # Across paragraphs, a quote span may start or end inside a paragraph; the stretch before
+    # its first marker (after its last) may then be emptied, since that paragraph keeps the
+    # text outside the span.
+    prose_before: bool = False
+    prose_after: bool = False
 
 
 def _joined(lines: list[str], start: int, end: int) -> str:
@@ -377,8 +410,48 @@ def _joined(lines: list[str], start: int, end: int) -> str:
 
 def locate_span(repo: Repo, finding: findings.Finding, span: SpanKind) -> Span:
     """Where the rewrite goes, as the file reads now: the quoted text inside the finding's
-    anchor lines, or the paragraph those lines sit in (by the `% @p` rule when the paragraph
-    has a marker, else the skeleton's paragraph)."""
+    anchor lines, or every paragraph those lines touch (by the skeleton; a paragraph's marker
+    line stays above the span). The `% @p` lines inside the span are listed in
+    `Span.markers`; a span across a section heading is refused."""
+    found = _locate(repo, finding, span)
+    lines = found.original.split("\n")
+    for offset, raw in enumerate(lines):
+        if skeleton.is_heading_line(raw):
+            raise ReviseError(
+                400,
+                f"the span crosses the heading on {found.file}:{found.line_start + offset}; a "
+                "rewrite stays within one section: comment on each side of the heading instead",
+            )
+    found.markers = [m.group("id") for raw in lines if (m := skeleton.MARKER_RE.match(raw))]
+    if found.markers and found.char_start is not None:
+        found.prose_before, found.prose_after = _prose_around(repo, found)
+    return found
+
+
+def _prose_around(repo: Repo, span: Span) -> tuple[bool, bool]:
+    """For a quote span: is there prose of the first paragraph before the quote, and of the
+    last paragraph after it?"""
+    lines = _read(repo, span.file).split("\n")
+    joined = _joined(lines, span.line_start, span.line_end)
+    assert span.char_start is not None and span.char_end is not None
+    try:
+        scan = skeleton.scan_document(repo.root, repo.main)
+    except ConfigError as exc:
+        raise ReviseError(400, str(exc)) from exc
+    first = scan.paragraphs_in(span.file, span.line_start, span.line_start)
+    last = scan.paragraphs_in(span.file, span.line_end, span.line_end)
+    first_line = first[0].line_start if first else span.line_start
+    last_line = last[-1].line_end if last else span.line_end
+    before = [*lines[first_line - 1 : span.line_start - 1], joined[: span.char_start]]
+    after = [joined[span.char_end :], *lines[span.line_end : last_line]]
+    return _has_prose("\n".join(before)), _has_prose("\n".join(after))
+
+
+def _has_prose(text: str) -> bool:
+    return bool(_active(text).strip())
+
+
+def _locate(repo: Repo, finding: findings.Finding, span: SpanKind) -> Span:
     file = finding.file
     lines = _read(repo, file).split("\n")
     if finding.anchor_state == "stale":
@@ -395,17 +468,30 @@ def locate_span(repo: Repo, finding: findings.Finding, span: SpanKind) -> Span:
             scan = skeleton.scan_document(repo.root, repo.main)
         except ConfigError as exc:
             raise ReviseError(400, str(exc)) from exc
-        paragraph = scan.paragraph_at(file, a)
-        if paragraph is None:
+        paragraphs = scan.paragraphs_in(file, a, b)
+        if not paragraphs:
             raise ReviseError(400, f"no paragraph found around {file}:{a}")
-        start, end = paragraph.line_start, paragraph.line_end
-        return Span(file, start, end, None, None, _joined(lines, start, end))
+        start, end = paragraphs[0].line_start, paragraphs[-1].line_end
+        return Span(
+            file, start, end, None, None, _joined(lines, start, end), paragraphs=len(paragraphs)
+        )
     joined = _joined(lines, a, b)
     # Search the prose only: LaTeX comments blanked out (same offsets). A quote found only in
     # a comment (typically the `% aigen-was:` line of an approved rewrite, where re-anchoring
     # finds the old wording) must not be "rewritten" inside that comment.
     masked = "\n".join(_mask_comment(line) for line in joined.split("\n"))
     hit = _find_collapsed(masked, finding.quote)
+    if hit is None:
+        # A quote across paragraphs holds the `% @p` line between them, which the masked text
+        # has blanked: take a match in the text as it is that starts and ends in prose.
+        hit = next(
+            (
+                (s, e)
+                for s, e in _find_all_collapsed(joined, finding.quote)
+                if masked[s] == joined[s] and masked[e - 1] == joined[e - 1]
+            ),
+            None,
+        )
     if hit is None and _find_collapsed(joined, finding.quote) is not None:
         raise ReviseError(400, _COMMENT_ONLY)
     if hit is None:
@@ -439,9 +525,14 @@ _COMMENT_ONLY = (
 
 def _find_collapsed(haystack: str, needle: str) -> tuple[int, int] | None:
     """(start, end) offsets in `haystack` of `needle` matched with whitespace collapsed."""
+    return next(iter(_find_all_collapsed(haystack, needle)), None)
+
+
+def _find_all_collapsed(haystack: str, needle: str) -> list[tuple[int, int]]:
+    """Every (start, end) of `needle` in `haystack`, whitespace collapsed, in order."""
     want = " ".join(needle.split())
     if not want:
-        return None
+        return []
     # The haystack with whitespace runs collapsed (leading ones dropped), and for each of its
     # characters the offset it came from.
     positions: list[int] = []
@@ -457,10 +548,13 @@ def _find_collapsed(haystack: str, needle: str) -> tuple[int, int] | None:
             collapsed_chars.append(ch)
             positions.append(i)
             prev_space = False
-    at = "".join(collapsed_chars).find(want)
-    if at < 0:
-        return None
-    return positions[at], positions[at + len(want) - 1] + 1
+    collapsed = "".join(collapsed_chars)
+    hits: list[tuple[int, int]] = []
+    at = collapsed.find(want)
+    while at >= 0:
+        hits.append((positions[at], positions[at + len(want) - 1] + 1))
+        at = collapsed.find(want, at + 1)
+    return hits
 
 
 # --------------------------------------------------------------------------- preparing
@@ -478,6 +572,13 @@ class Prepared:
 SPAN_WORDS = {"quote": "the quoted span", "paragraph": "the whole paragraph"}
 
 
+def span_words(kind: SpanKind, span: Span) -> str:
+    """How the prompt names the span: "the quoted span", "the whole paragraph(s)"."""
+    if kind == "paragraph" and span.paragraphs > 1:
+        return "the whole paragraphs"
+    return SPAN_WORDS[kind]
+
+
 def prepare(repo: Repo, runs: RunManager, request: RevisionRequest) -> Prepared:
     with db.connect(repo) as conn:
         finding = runstore.get_finding(conn, request.finding_id.strip())
@@ -492,9 +593,11 @@ def prepare(repo: Repo, runs: RunManager, request: RevisionRequest) -> Prepared:
             comment=finding.problem,
             comment_why=finding.why,
             original=span.original,
-            span_kind=SPAN_WORDS[request.span],
+            span_kind=span_words(request.span, span),
             file=span.file,
             line=span.line_start,
+            line_end=span.line_end,
+            kept_markers=span.markers,
             node_id=finding.json_ref,
             answer_format=REWRITE_FORMAT,
         )
@@ -518,19 +621,40 @@ def prepare(repo: Repo, runs: RunManager, request: RevisionRequest) -> Prepared:
         runs.check_available(plan)
     except RunError as exc:
         raise ReviseError(exc.status, exc.detail) from exc
-    plan.interpret = parse_rewrite
+    plan.interpret = lambda result: parse_rewrite(result, span)
     return Prepared(revision_id, finding, span, request.span, plan)
 
 
 # --------------------------------------------------------------------------- applying
 
 
+_BEGIN_RE = re.compile(r"\\begin\s*\{([^{}]+)\}")
+
+
 def _wrap_one(paragraph: str) -> str:
+    lines = paragraph.split("\n")
+    # Comment lines above the text (a `% says:` line under a marker) stay outside the wrapper,
+    # and so does a block with no prose: only comments, or one figure / table / equation.
+    head = 0
+    while head < len(lines) and not strip_tex_comment(lines[head]).strip():
+        head += 1
+    body = "\n".join(lines[head:])
+    if not body or _is_display(body):
+        return paragraph
     # A `%` comment on the last line (`...end.%` is a common idiom) would comment out the
     # closing brace and let \aigen swallow the text after it: close on a line of its own.
-    last = paragraph.rsplit("\n", 1)[-1]
+    last = lines[-1]
     close = "\n}" if strip_tex_comment(last) != last else "}"
-    return f"\\aigen{{{paragraph}{close}"
+    return "\n".join([*lines[:head], f"\\aigen{{{body}{close}"])
+
+
+def _is_display(block: str) -> bool:
+    """One environment the skeleton keeps out of paragraphs (a float, a display equation)."""
+    active = _active(block).strip()
+    m = _BEGIN_RE.match(active)
+    if m is None or m.group(1).strip() not in skeleton.EXCLUDED_ENVS:
+        return False
+    return bool(re.search(r"\\end\s*\{" + re.escape(m.group(1)) + r"\}\s*$", active))
 
 
 def _wrap(text: str) -> str:
@@ -542,6 +666,97 @@ def _wrap(text: str) -> str:
 def _active(text: str) -> str:
     """`text` with LaTeX comments removed, line by line."""
     return "\n".join(strip_tex_comment(raw) for raw in text.split("\n"))
+
+
+def _segments(text: str) -> tuple[list[list[str]], list[str]]:
+    """`text`'s lines cut at its `% @p` lines: (stretches, marker lines); one more stretch
+    than markers. Without markers the whole text is one stretch."""
+    stretches: list[list[str]] = [[]]
+    markers: list[str] = []
+    for line in text.split("\n"):
+        if skeleton.MARKER_RE.match(line):
+            markers.append(line)
+            stretches.append([])
+        else:
+            stretches[-1].append(line)
+    return stretches, markers
+
+
+def _trim(lines: list[str]) -> str:
+    """The lines joined, without blank lines at either end."""
+    start, end = 0, len(lines)
+    while start < end and not lines[start].strip():
+        start += 1
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return "\n".join(lines[start:end])
+
+
+def marker_ids(text: str) -> list[str]:
+    return [m.group("id") for line in text.split("\n") if (m := skeleton.MARKER_RE.match(line))]
+
+
+def check_rewrite(span: Span, text: str) -> str | None:
+    """Why `text` cannot replace a span across paragraphs, or None. It must keep the span's
+    `% @p` lines as they are, in order, and leave prose under each, so that every paragraph of
+    the spec keeps its text (the stretch before the first marker, or after the last, may go
+    empty when its paragraph keeps text outside a quote span)."""
+    got = marker_ids(text)
+    if not span.markers:
+        if got:
+            return (
+                "the text has a `% @p` line; markers are added from the Spec tab, never by a "
+                "rewrite"
+            )
+        return None
+    if got != span.markers:
+        want = ", ".join(f"`% @p {m}`" for m in span.markers)
+        have = ", ".join(f"`% @p {m}`" for m in got) or "none"
+        return (
+            f"a rewrite across paragraphs keeps their `% @p` lines as they are, in order "
+            f"({want}); this text has {have}"
+        )
+    stretches, _ = _segments(text)
+    last = len(stretches) - 1
+    for i, lines in enumerate(stretches):
+        if _has_prose("\n".join(lines)):
+            continue
+        if (i == 0 and span.prose_before) or (i == last and span.prose_after):
+            continue
+        where = f"under `% @p {span.markers[i - 1]}`" if i else f"before `% @p {span.markers[0]}`"
+        return (
+            f"the rewrite leaves the paragraph {where} empty; every paragraph keeps some text "
+            "(to drop one, delete its node in the Spec tab)"
+        )
+    return None
+
+
+def _compose(span: Span, new_text: str) -> tuple[str | None, str, bool]:
+    """(the `% aigen-was:` line for the span's first line or None, the text that replaces the
+    span, whether anything changed). Each stretch between `% @p` lines is rewritten on its
+    own: left as it was when the new text did not change it, else its original goes on a
+    `% aigen-was:` line (under its marker; the first stretch's goes above the span) and its
+    new text in `\\aigen{...}`."""
+    old_stretches, old_markers = _segments(span.original)
+    new_stretches, _ = _segments(new_text) if span.markers else ([new_text.split("\n")], [])
+    first_was: str | None = None
+    out: list[str] = []
+    any_change = False
+    for i, (old_lines, new_lines) in enumerate(zip(old_stretches, new_stretches, strict=True)):
+        old, new = _trim(old_lines), _trim(new_lines)
+        changed = " ".join(old.split()) != " ".join(new.split())
+        any_change = any_change or changed
+        was = WAS_PREFIX + " ".join(old.split()) if changed and old.strip() else None
+        body = (_wrap(new) if new.strip() else "") if changed else old
+        if i == 0:
+            first_was = was
+            out.append(body)
+            continue
+        # The marker line, after a blank line when the original had one before it.
+        prev = old_stretches[i - 1]
+        gap = "\n\n" if len(prev) > 1 and not prev[-1].strip() else "\n"
+        out.append(gap + "\n".join([old_markers[i - 1], *([was] if was else []), body]))
+    return first_was, "".join(out), any_change
 
 
 @dataclass
@@ -643,28 +858,35 @@ def apply(repo: Repo, revision_id: str, request: ApplyRequest) -> Applied:
             "the text changed since this rewrite was proposed; propose it again on the current "
             "wording",
         )
-    wrapped = bool(new_text.strip())
+    problem = check_rewrite(span, new_text)
+    if problem:
+        raise ReviseError(400, f"not approved: {problem}")
+    first_was, replacement, changed = _compose(span, new_text)
+    if not changed:
+        raise ReviseError(400, "the approved text is the text as it reads now: nothing to write")
+    wrapped = "\\aigen{" in replacement
     if wrapped:
         # Fail before anything is written when main.tex cannot get the macro (no
         # \begin{document}, unreadable): a half-applied revision could not be retried.
         ensure_preamble(repo, write=False)
     lines = _read(repo, span.file).split("\n")
-    was_line = WAS_PREFIX + " ".join(span.original.split())
     joined = _joined(lines, span.line_start, span.line_end)
     if span.char_start is not None and span.char_end is not None:
-        replacement = _wrap(new_text) if wrapped else ""
         new_joined = joined[: span.char_start] + replacement + joined[span.char_end :]
     else:
-        new_joined = _wrap(new_text) if wrapped else ""
-    new_block = [was_line, *(new_joined.split("\n") if new_joined else [])]
+        new_joined = replacement
+    new_block = [
+        *([first_was] if first_was else []),
+        *(new_joined.split("\n") if new_joined else []),
+    ]
     lines[span.line_start - 1 : span.line_end] = new_block
     updated = "\n".join(lines)
     if not updated.endswith("\n"):
         updated += "\n"
     _write(repo, span.file, updated)
     edit = ensure_preamble(repo) if wrapped else None
-    line_start = span.line_start + 1
-    line_end = span.line_start + max(1, len(new_block) - 1)
+    line_start = span.line_start + (1 if first_was else 0)
+    line_end = max(line_start, span.line_start + len(new_block) - 1)
     if edit is not None and normalize_rel(edit.main) == normalize_rel(span.file):
         if span.line_start >= edit.line:  # the macro block went in above the span
             line_start += edit.count

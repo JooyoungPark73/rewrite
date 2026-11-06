@@ -19,13 +19,42 @@
 // `[models] rewrite` (codex, gpt-6-astra, medium unless the paper sets another), and the
 // last picks are remembered in this browser (localStorage), so the next "Rewrite…" opens
 // with them. Picking "default (...)" again forgets that pick.
+//
+// 2026-11-06: a comment across paragraphs rewrites all of them. "The whole paragraph"
+// becomes "the N paragraphs it spans" (counted from the skeleton, as the backend does). The
+// `% @p` lines between the paragraphs go to the model and must come back unchanged; on
+// Approve each changed paragraph gets its own % aigen-was: line and \aigen{...} under its
+// marker, and a paragraph the rewrite left as it was stays untouched.
 import { useEffect, useMemo, useState } from 'react'
-import type { RevisionSpan } from '../api/client'
+import type { Finding, Revision, RevisionSpan, SkeletonParagraph } from '../api/client'
 import { formatTime } from '../findings/format'
 import RunnerControls from '../findings/RunnerControls'
 import { isPending, useReviseStore } from '../state/revise'
 import { useRunsStore } from '../state/runs'
+import { useSpecStore } from '../state/spec'
 import { wordDiff } from './wordDiff'
+
+/** A `% @p <id>` line (the same rule as the backend's skeleton.MARKER_RE). */
+const MARKER_LINE = /^[ \t]*%+[ \t]*@p[ \t]+\S+[ \t]*$/m
+
+/**
+ * The paragraphs a finding's lines touch, in order: those whose text lines overlap the
+ * finding's (app/skeleton.py `paragraphs_in`), else the one at its first line.
+ */
+function paragraphsSpanned(paragraphs: SkeletonParagraph[], finding: Finding): SkeletonParagraph[] {
+  const a = finding.anchor_line_start
+  const b = finding.anchor_line_end
+  const inFile = paragraphs.filter((p) => p.file === finding.file)
+  const overlapping = inFile.filter((p) => p.line_start <= b && p.line_end >= a)
+  return overlapping.length > 0 ? overlapping : inFile.filter((p) => p.line_start <= a && a <= p.line_end)
+}
+
+/** How the diff names what a proposal replaces. */
+function spanWords(revision: Revision): string {
+  const across = MARKER_LINE.test(revision.original)
+  if (revision.span === 'quote') return across ? 'the quoted span, across paragraphs' : 'the quoted span'
+  return across || revision.original.trim().includes('\n\n') ? 'the whole paragraphs' : 'the whole paragraph'
+}
 
 /** The runner / model / thinking picked last time ('' = the default). */
 interface Picks {
@@ -91,6 +120,14 @@ export default function RevisionDialog() {
     if (!runners) void loadRunners()
   }, [runners, loadRunners])
 
+  // The paragraphs "the whole paragraph(s)" would cover, from a fresh skeleton.
+  const skeleton = useSpecStore((s) => s.skeleton)
+  const findingId = finding?.id
+  useEffect(() => {
+    if (findingId) void useSpecStore.getState().refreshSkeleton()
+  }, [findingId])
+  const spanned = useMemo(() => (finding && skeleton ? paragraphsSpanned(skeleton.paragraphs, finding) : []), [finding, skeleton])
+
   const revision = detail?.revision ?? null
   const run = detail?.run ?? null
   const live = useRunsStore((s) => (run?.id ? s.live[run.id] : undefined))
@@ -102,6 +139,7 @@ export default function RevisionDialog() {
   // yet, so a single earlier proposal must be listed too).
   const earlier = history.filter((r) => r.id !== revision?.id)
   const canApprove = revision?.status === 'done' && !revision.applied_at && finding.state !== 'dismissed'
+  const across = !!revision && MARKER_LINE.test(revision.original)
   const propose = () => void start({ span, runner: runner || null, model: model || null, thinking: thinking || null })
   const copy = async () => {
     try {
@@ -145,7 +183,12 @@ export default function RevisionDialog() {
           </label>
           <label className="flex cursor-pointer items-center gap-1">
             <input type="radio" className="radio radio-xs" name="revision-span" checked={span === 'paragraph'} onChange={() => setSpan('paragraph')} disabled={pending} data-testid="span-paragraph" />
-            the whole paragraph
+            <span
+              title={spanned.length > 1 ? `Paragraphs ${spanned.map((p) => p.marker_id ?? '(not adopted)').join(', ')}` : undefined}
+              data-testid="span-paragraph-label"
+            >
+              {spanned.length > 1 ? `the ${spanned.length} paragraphs it spans` : 'the whole paragraph'}
+            </span>
           </label>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -174,7 +217,8 @@ export default function RevisionDialog() {
           The model gets the comment, the text as it reads now, the paragraph and section around it, the paragraph's spec
           entry and the field's standard of evidence, and must change only what the comment asks. Nothing is written
           until you approve; the approved text goes in as <code>\aigen{'{'}…{'}'}</code> with the original kept on a{' '}
-          <code>% aigen-was:</code> line, for the co-authors to accept by removing the wrapper.
+          <code>% aigen-was:</code> line, for the co-authors to accept by removing the wrapper. Across paragraphs, the{' '}
+          <code>% @p</code> lines between them stay as they are and each changed paragraph gets its own wrapper.
         </p>
 
         {error && (
@@ -202,7 +246,7 @@ export default function RevisionDialog() {
         {revision?.status === 'done' && (
           <>
             <div className="min-h-0 overflow-y-auto rounded border border-base-300 px-3 py-2 text-sm leading-6" data-testid="revision-diff">
-              <div className="mb-1 text-xs font-medium text-base-content/70">Diff against the current text ({revision.span === 'quote' ? 'the quoted span' : 'the whole paragraph'})</div>
+              <div className="mb-1 text-xs font-medium text-base-content/70">Diff against the current text ({spanWords(revision)})</div>
               {text.trim() === '' ? (
                 <p>
                   <del className="rounded bg-error/15 px-0.5 text-error" data-testid="diff-removed">{revision.original}</del>{' '}
@@ -227,7 +271,11 @@ export default function RevisionDialog() {
               )}
             </div>
             <label className="flex min-h-0 flex-col gap-1">
-              <span className="text-xs font-medium text-base-content/70">Proposed text (edit before approving; empty = drop the span)</span>
+              <span className="text-xs font-medium text-base-content/70">
+                {across
+                  ? 'Proposed text (edit before approving; keep the % @p lines as they are, with text under each)'
+                  : 'Proposed text (edit before approving; empty = drop the span)'}
+              </span>
               <textarea
                 className="textarea min-h-28 w-full font-mono text-xs leading-5"
                 value={text}

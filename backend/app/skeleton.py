@@ -65,6 +65,12 @@ _COMMAND_RE = re.compile(r"\\[A-Za-z@]+")
 _WORD_RE = re.compile(r"\w")
 _LINE_KEEPENDS_RE = re.compile(r"[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+\Z")
 
+
+def is_heading_line(raw: str) -> bool:
+    """A `\\section` / `\\subsection` line (comments ignored)."""
+    return bool(_SECTIONING_RE.match(strip_tex_comment(raw)))
+
+
 _EXCLUDED_BASE = (
     "figure",
     "table",
@@ -198,6 +204,19 @@ class DocScan:
             if para.line_start <= line <= para.line_end or para.marker_line == line:
                 return para
         return None
+
+    def paragraphs_in(self, file: str, line_start: int, line_end: int) -> list[Paragraph]:
+        """The paragraphs of `file` whose text lines overlap `line_start`-`line_end`, in
+        order; when none does, the paragraph at `line_start` (its marker line counts)."""
+        found = [
+            p
+            for p in self.paragraphs
+            if p.file == file and p.line_start <= line_end and p.line_end >= line_start
+        ]
+        if found:
+            return found
+        at = self.paragraph_at(file, line_start)
+        return [at] if at is not None else []
 
     def heading_at(self, file: str, line: int) -> Heading | None:
         for heading in self.headings:

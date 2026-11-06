@@ -3,7 +3,8 @@
 // Two dialogs share this store. CommentBox: the editor's selection menu → "Comment…" →
 // a comment typed by the author becomes a finding (POST /api/findings/comment) with the
 // usual card, highlight and states. RevisionDialog: "Rewrite…" on any finding card → a
-// model proposes a replacement for the quoted span or the whole paragraph; the dialog
+// model proposes a replacement for the quoted span or the whole paragraph (since
+// 2026-11-06 either may run across paragraphs, keeping their `% @p` lines); the dialog
 // shows a word diff and the editable text; "Approve" writes it as \aigen{...} with the
 // original kept on a "% aigen-was:" line, marks the finding addressed, and the paragraph
 // turns stale for re-reading. Co-authors accept by removing the wrapper (in Overleaf or

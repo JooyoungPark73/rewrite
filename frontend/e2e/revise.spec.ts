@@ -185,3 +185,43 @@ test('Edit… changes a comment; Rewrite… defaults to codex gpt-6-astra medium
   await expect(model).toHaveValue('')
   await expect(thinking).toHaveValue('')
 })
+
+test('a comment across two paragraphs: Rewrite… offers the paragraphs it spans', async ({ page, request }) => {
+  // Give the intro a second paragraph, then comment from the end of the first into it.
+  const twoParagraphs = ['\\section{Introduction}', SENTENCE, 'This sentence cites a missing key~\\cite{nobody}.', '', 'A second paragraph follows here.', ''].join('\n')
+  expect((await request.put(`${MOCK_URL}/api/file`, { data: { path: INTRO, content: twoParagraphs } })).ok()).toBe(true)
+  const comment = await request.post(`${MOCK_URL}/api/findings/comment`, {
+    data: {
+      file: INTRO,
+      line_start: 3,
+      line_end: 5,
+      quote: 'This sentence cites a missing key~\\cite{nobody}.\n\nA second paragraph follows here.',
+      problem: 'No transition between these paragraphs.',
+    },
+  })
+  expect(comment.ok()).toBe(true)
+
+  await page.goto('/')
+  await page.getByTestId('tab-findings').click()
+  await page.getByTestId('run-row').filter({ hasText: 'comment on sections/intro.tex' }).first().click()
+  await page.locator('[data-testid="finding-card"]').filter({ hasText: 'No transition' }).first().getByTestId('finding-rewrite').click()
+  const dialog = page.getByTestId('revision-dialog')
+  await expect(dialog.getByTestId('span-paragraph-label')).toHaveText('the 2 paragraphs it spans')
+  await dialog.getByTestId('span-paragraph').check()
+  await dialog.getByTestId('revision-propose').click()
+  await expect(dialog.getByTestId('revision-text')).toBeVisible({ timeout: 10_000 })
+  await expect(dialog.getByTestId('revision-diff')).toContainText('the whole paragraphs')
+  const sent = (await (await request.get(`${MOCK_URL}/__mock/revise-log`)).json()).filter((e: { path: string }) => e.path === '/api/revisions')
+  expect(sent.at(-1).body).toMatchObject({ span: 'paragraph' })
+
+  // A comment inside one paragraph keeps the old label.
+  await dialog.getByTestId('revision-close').click()
+  await page.getByTestId('tab-editor').click()
+  await page.getByTestId('file-tree').locator(`[data-path="${INTRO}"]`).click()
+  await selectLineAndOpenMenu(page, 'A second paragraph')
+  await page.getByTestId('ctx-comment').click()
+  await page.getByTestId('comment-problem').fill('Say why.')
+  await page.getByTestId('comment-submit').click()
+  await page.locator('[data-testid="finding-card"]').filter({ hasText: 'Say why.' }).first().getByTestId('finding-rewrite').click()
+  await expect(dialog.getByTestId('span-paragraph-label')).toHaveText('the whole paragraph')
+})

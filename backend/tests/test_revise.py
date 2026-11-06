@@ -418,3 +418,226 @@ def test_rewrite_defaults_to_codex_gpt_6_astra_medium(env: Env) -> None:
     # Another runner without a model: that CLI's own default model, as for review passes.
     other = env.wait(env.start(finding["id"], model=None, thinking=None)["id"])["run"]
     assert (other["runner"], other["model"], other["thinking"]) == ("claude", None, "medium")
+
+
+# --------------------------------------------------------------------------- across paragraphs
+# Decided 2026-11-06: a comment that spans paragraphs rewrites all of them. The `% @p` lines
+# inside the span go to the model, come back unchanged and stay in place on apply.
+
+BRIDGE = "No bridge from warm pools to snapshots; add one."
+END_OF_P1 = "costs memory and saves nothing."
+START_OF_P2 = "Snapshot restore is the main alternative."
+
+
+def intro_lines(repo: Path) -> list[str]:
+    return (repo / INTRO).read_text().split("\n")
+
+
+def line_of(lines: list[str], text: str) -> int:
+    """1-based number of the first line containing `text`."""
+    return next(i for i, line in enumerate(lines, 1) if text in line)
+
+
+def cross_comment(env: Env) -> dict[str, Any]:
+    """A comment from the end of the second intro paragraph to the start of the third,
+    across the third one's `% @p` line (as the editor's selection sends it)."""
+    lines = intro_lines(env.repo)
+    start, end = line_of(lines, END_OF_P1), line_of(lines, START_OF_P2)
+    quote = f"{END_OF_P1}\n\n% @p {env.paragraph_ids[2]}\n{START_OF_P2}"
+    assert quote in "\n".join(lines[start - 1 : end])
+    return env.comment(line_start=start, line_end=end, quote=quote, problem=BRIDGE)
+
+
+def marker_links(client: TestClient) -> list[str | None]:
+    return [
+        p["marker_id"]
+        for p in ok(client.get("/api/spec/skeleton"))["paragraphs"]
+        if p["file"] == INTRO
+    ]
+
+
+def test_whole_paragraphs_across_a_marker(env: Env, initialized_repo: Path) -> None:
+    p1, p2 = env.paragraph_ids[1], env.paragraph_ids[2]
+    before = intro_lines(initialized_repo)
+    first = line_of(before, "Providers mitigate cold starts")
+    last = line_of(before, "time, and these page faults dominate restore latency.")
+    original = "\n".join(before[first - 1 : last])
+    proposal = original.replace(
+        END_OF_P1, "costs memory and saves nothing, a waste that\nsnapshots avoid."
+    ).replace(START_OF_P2, "Snapshot restore avoids it.")
+    env.fakes.set("claude", lines=claude_lines(text=answer(proposal), structured=False))
+    finding = cross_comment(env)
+    assert finding["anchor_state"] == "ok"
+    rev = env.wait(env.start(finding["id"], span="paragraph")["id"])["revision"]
+    assert rev["status"] == "done", rev
+    assert (rev["line_start"], rev["line_end"]) == (first, last)
+    assert rev["original"] == original and f"% @p {p2}" in rev["original"]
+    prompt = env.fakes.calls("claude")[-1]["prompt"]
+    assert "## Rewrite: the whole paragraphs across 2 paragraphs" in prompt
+    assert f"(`% @p {p2}`)" in prompt and "keep every one of them exactly as it is" in prompt
+    assert "no `% @p` line" not in prompt
+
+    applied = ok(env.client.post(f"/api/revisions/{rev['id']}/apply", json={}))
+    after = intro_lines(initialized_repo)
+    # Each paragraph: its marker, its own `% aigen-was:` line, its own wrapper.
+    at = first - 1
+    assert after[at - 1] == f"% @p {p1}"
+    assert after[at].startswith("% aigen-was: Providers mitigate cold starts")
+    assert after[at].endswith(END_OF_P1)
+    assert after[at + 1].startswith("\\aigen{Providers mitigate cold starts")
+    assert after[at + 5] == "snapshots avoid.}" and after[at + 6] == ""
+    assert after[at + 7] == f"% @p {p2}"
+    assert after[at + 8].startswith("% aigen-was: " + START_OF_P2)
+    assert after[at + 9].startswith("\\aigen{Snapshot restore avoids it.")
+    assert applied["outstanding"] == 2 and applied["line_start"] == first + 1
+    # Every paragraph is still linked to its node, in order; the two rewritten ones are stale.
+    assert marker_links(env.client) == env.paragraph_ids
+    status = ok(env.client.get("/api/spec/status"))["nodes"]
+    assert status[p1]["status"] == "stale" and status[p2]["status"] == "stale"
+    assert status[env.paragraph_ids[3]]["status"] != "stale"
+
+
+def test_quote_across_a_marker_rewrites_both_sides(env: Env, initialized_repo: Path) -> None:
+    p2 = env.paragraph_ids[2]
+    proposal = (
+        "costs memory and saves nothing, the waste snapshots avoid.\n\n"
+        f"% @p {p2}\nSnapshot restore is the main alternative to warm pools."
+    )
+    env.fakes.set("claude", lines=claude_lines(text=answer(proposal), structured=False))
+    finding = cross_comment(env)
+    rev = env.wait(env.start(finding["id"])["id"])["revision"]
+    assert rev["status"] == "done", rev
+    assert rev["original"] == f"{END_OF_P1}\n\n% @p {p2}\n{START_OF_P2}"
+    prompt = env.fakes.calls("claude")[-1]["prompt"]
+    assert "## Rewrite: the quoted span across 2 paragraphs" in prompt
+    start = finding["anchor_line_start"]
+    ok(env.client.post(f"/api/revisions/{rev['id']}/apply", json={}))
+    after = intro_lines(initialized_repo)
+    assert after[start - 1] == "% aigen-was: " + END_OF_P1
+    assert after[start] == (
+        "kept warm for ten minutes and then evicted unused "
+        "\\aigen{costs memory and saves nothing, the waste snapshots avoid.}"
+    )
+    assert after[start + 1] == "" and after[start + 2] == f"% @p {p2}"
+    assert after[start + 3] == "% aigen-was: " + START_OF_P2
+    assert after[start + 4] == (
+        "\\aigen{Snapshot restore is the main alternative to warm pools.} The platform "
+        "checkpoints an initialized"
+    )
+    assert marker_links(env.client) == env.paragraph_ids
+
+
+def test_unchanged_paragraph_is_left_alone(env: Env, initialized_repo: Path) -> None:
+    # Only the second paragraph's part changes: the first keeps its text, with no wrapper and
+    # no `% aigen-was:` line.
+    p2 = env.paragraph_ids[2]
+    proposal = f"{END_OF_P1}\n\n% @p {p2}\nSnapshots avoid that waste."
+    env.fakes.set("claude", lines=claude_lines(text=answer(proposal), structured=False))
+    finding = cross_comment(env)
+    rev = env.wait(env.start(finding["id"])["id"])["revision"]
+    start = finding["anchor_line_start"]
+    applied = ok(env.client.post(f"/api/revisions/{rev['id']}/apply", json={}))
+    after = intro_lines(initialized_repo)
+    assert after[start - 1].endswith("evicted unused " + END_OF_P1)
+    assert after[start + 1] == f"% @p {p2}"
+    assert after[start + 2] == "% aigen-was: " + START_OF_P2
+    assert after[start + 3].startswith("\\aigen{Snapshots avoid that waste.} The platform")
+    assert applied["outstanding"] == 1 and applied["line_start"] == start
+
+
+def test_markers_must_come_back_unchanged(env: Env, initialized_repo: Path) -> None:
+    p2 = env.paragraph_ids[2]
+    # The model merged the two parts and dropped the marker: the run fails, nothing to apply.
+    env.fakes.set(
+        "claude",
+        lines=claude_lines(text=answer("costs memory; snapshots avoid that."), structured=False),
+    )
+    finding = cross_comment(env)
+    failed = env.wait(env.start(finding["id"])["id"])["revision"]
+    assert failed["status"] == "failed" and f"`% @p {p2}`" in failed["error"]
+    # A good proposal for the whole paragraphs, then edits that break it are refused on apply;
+    # the file is untouched.
+    good = f"First.\n\n% @p {p2}\nSecond."
+    env.fakes.set("claude", lines=claude_lines(text=answer(good), structured=False))
+    rev = env.wait(env.start(finding["id"], span="paragraph")["id"])["revision"]
+    assert rev["status"] == "done"
+    before = (initialized_repo / INTRO).read_text()
+    for text, words in [
+        ("Merged text.", "keeps their `% @p` lines"),
+        (f"First.\n\n% @p {p2}\n", f"under `% @p {p2}` empty"),
+        (f"% @p {p2}\nSecond.", f"before `% @p {p2}` empty"),
+        ("First.\n\n% @p other\nSecond.", "this text has `% @p other`"),
+        (rev["original"], "nothing to write"),
+    ]:
+        res = env.client.post(f"/api/revisions/{rev['id']}/apply", json={"text": text})
+        assert res.status_code == 400 and words in res.json()["detail"], (text, res.text)
+    assert (initialized_repo / INTRO).read_text() == before
+    # A quote that starts and ends inside the paragraphs may empty either part: each
+    # paragraph keeps its text outside the quote.
+    env.fakes.set(
+        "claude", lines=claude_lines(text=answer(f"% @p {p2}\nBridge."), structured=False)
+    )
+    rev = env.wait(env.start(finding["id"])["id"])["revision"]
+    assert rev["status"] == "done", rev
+    ok(env.client.post(f"/api/revisions/{rev['id']}/apply", json={}))
+    after = (initialized_repo / INTRO).read_text()
+    assert "evicted unused \n\n% @p" in after and "\\aigen{Bridge.} The platform" in after
+    assert marker_links(env.client) == env.paragraph_ids
+
+
+def test_no_marker_may_appear_in_a_single_paragraph_rewrite(env: Env) -> None:
+    finding = env.comment()
+    rev = env.wait(env.start(finding["id"])["id"])["revision"]
+    res = env.client.post(
+        f"/api/revisions/{rev['id']}/apply", json={"text": "One.\n\n% @p p-new\nTwo."}
+    )
+    assert res.status_code == 400 and "from the Spec tab" in res.json()["detail"]
+
+
+def test_span_across_a_heading_is_refused(env: Env, initialized_repo: Path) -> None:
+    path = initialized_repo / INTRO
+    path.write_text(
+        path.read_text().rstrip("\n") + "\n\n\\subsection{Scope}\nWe study FaaS only.\n"
+    )
+    lines = intro_lines(initialized_repo)
+    start, end = line_of(lines, "in Section~\\ref{sec:results}."), line_of(lines, "We study FaaS")
+    finding = env.comment(
+        line_start=start,
+        line_end=end,
+        quote="in Section~\\ref{sec:results}.\n\n\\subsection{Scope}\nWe study FaaS only.",
+        json_ref=env.paragraph_ids[3],
+    )
+    for span in ("quote", "paragraph"):
+        res = env.client.post(
+            "/api/revisions", json={"finding_id": finding["id"], "span": span, "runner": "claude"}
+        )
+        assert res.status_code == 400 and "crosses the heading" in res.json()["detail"], res.text
+
+
+def test_older_template_copy_refuses_spans_across_paragraphs(
+    env: Env, initialized_repo: Path
+) -> None:
+    # The paper's copy of the template is what runs. A copy from before 2026-11-06 cannot ask
+    # the model to keep the `% @p` lines: within one paragraph it works, across paragraphs
+    # the request is refused with the file named, and nothing is read from the app instead.
+    copy = initialized_repo / ".rewrite" / "prompts" / "drafts" / "rewrite.md"
+    copy.write_text(
+        "---\nname: draft-rewrite\nkind: draft\nlevel: sentence\n---\nMine: {{ original }}\n"
+    )
+    res = env.client.post(
+        "/api/revisions", json={"finding_id": cross_comment(env)["id"], "runner": "claude"}
+    )
+    assert res.status_code == 400 and "predates rewrites across paragraphs" in res.json()["detail"]
+    assert ".rewrite/prompts/drafts/rewrite.md" in res.json()["detail"]
+    single = env.comment()
+    assert env.wait(env.start(single["id"])["id"])["revision"]["status"] == "done"
+    assert env.fakes.calls("claude")[-1]["prompt"].count("Mine: ") == 1
+
+
+def test_wrap_keeps_comments_and_displays_outside() -> None:
+    assert _wrap("% says: x\nText.") == "% says: x\n\\aigen{Text.}"
+    figure = "\\begin{figure}\n\\includegraphics{a}\n\\end{figure}"
+    assert (
+        _wrap(f"Text.\n\n{figure}\n\nMore.") == f"\\aigen{{Text.}}\n\n{figure}\n\n\\aigen{{More.}}"
+    )
+    assert _wrap("% only a comment") == "% only a comment"

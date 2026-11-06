@@ -90,6 +90,16 @@ the paper. Co-authors accept by removing a wrapper and its `% aigen-was:` line (
 here); `latex-hygiene` reports any left before submission, and the commented-out
 `\renewcommand{\aigen}[1]{#1}` in the preamble renders them all as plain text for a clean build.
 
+A comment may run across paragraphs ("these two paragraphs do not connect; add a bridge"):
+select from the end of one into the next. **Rewrite…** then works on all of them, the quoted
+span across the boundary or "the N paragraphs it spans" whole. The model sees each
+paragraph's spec entry and must return the `% @p` lines between them unchanged, with text
+under each, so every paragraph stays linked to its node (a proposal that drops or reorders
+one fails, and so does an edit that empties a paragraph: to merge or drop a paragraph,
+delete its node in the Spec tab). Approve marks each changed paragraph on its own, its
+`% aigen-was:` line under its marker and its own `\aigen{…}`; a paragraph the proposal left as
+it was is not touched. A span cannot cross a section heading.
+
 **Edit…** on one of your own comment cards reopens the comment box with its text; saving
 changes the text and keeps the span, so the next **Rewrite…** sends the new wording. A pass's
 findings cannot be edited: they stay as the run wrote them. The Rewrite dialog proposes with

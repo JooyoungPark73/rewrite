@@ -48,3 +48,30 @@ on model findings too. With phases 7 and 8 the app covers Write, Revise and Revi
   rule skips comments, so it renders and anchors correctly; it only looks odd in the source.
 - Not built: "Accept all" / "Reject" of wrappers in the app (co-authors do it in Overleaf as
   agreed); re-anchoring a comment whose quote disappeared (add a fresh comment instead).
+
+### 2026-11-06 — rewrites across paragraphs (the author's request)
+
+- "Why only one paragraph? Transitions between paragraphs cannot be rewritten." A rewrite now
+  covers every paragraph a finding's lines touch. `locate_span`: span `paragraph` =
+  `DocScan.paragraphs_in(file, a, b)` (text lines overlapping, else the paragraph at `a`);
+  span `quote` may cross a `% @p` line (the masked search fails on it, so a match in the raw
+  text that starts and ends in prose is taken). A span across a `\section`/`\subsection` line
+  is refused. `Span.markers` lists the `% @p` ids inside.
+- Prompt: `paragraphs` (each one's id, says, function, claims, source) and `kept_markers`;
+  `prompts/drafts/rewrite.md` asks to keep those lines exactly, in order, text under each.
+  `parse_rewrite(result, span)` allows exactly those markers (`parse_fenced(allow_markers=)`)
+  and fails the run otherwise; `check_rewrite` runs again on Approve for the author's edit.
+  Either end of a quote span may go empty when its paragraph keeps text outside the quote.
+- Apply (`_compose`): the text is cut at the marker lines; each stretch is left as it was if
+  unchanged (whitespace collapsed), else gets its own `% aigen-was:` line (under its marker;
+  the first one above the span) and `\aigen{...}`. `_wrap` keeps leading comment lines (a
+  `% says:` line) and float / display blocks outside the wrapper. Approving text identical to
+  the current text is refused (nothing to write).
+- The template that runs is the paper's copy (`rewrite init` copies it and never overwrites;
+  the author wants the paper repo to hold the templates). A copy without `kept_markers`
+  refuses spans across paragraphs with a 400 naming the file. scvla's copy was updated by
+  hand on 2026-11-06 (the author had not edited `.rewrite/`).
+- UI: the span radio reads "the N paragraphs it spans" (skeleton, refreshed when the dialog
+  opens); the diff header and the text box label say when the span is across paragraphs.
+- Tests: `tests/test_revise.py` (+8), `e2e/revise.spec.ts` (+1).
+

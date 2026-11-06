@@ -124,16 +124,25 @@ _FORBIDDEN_RE = re.compile(
     r"\\(?:section|subsection|subsubsection)\*?\s*\{|^\s*%\s*@p\s|\\begin\{document\}|\\end\{document\}",
     re.M,
 )
+# The same without the `% @p` alternative: a rewrite across paragraphs keeps their markers
+# (app/revise.py checks that they are exactly the span's own).
+_FORBIDDEN_KEEP_MARKERS_RE = re.compile(
+    r"\\(?:section|subsection|subsubsection)\*?\s*\{|\\begin\{document\}|\\end\{document\}",
+    re.M,
+)
 _FENCE_RE = re.compile(r"```[ \t]*[A-Za-z]*[ \t]*\r?\n(.*?)\r?\n?```", re.S)
 _NOTES_RE = re.compile(r"^\s*notes?\s*:\s*(.*)$", re.I | re.S)
 
 
-def parse_fenced(result: RunResult, what: str, asked: str, *, allow_empty: bool) -> RunOutcome:
+def parse_fenced(
+    result: RunResult, what: str, asked: str, *, allow_empty: bool, allow_markers: bool = False
+) -> RunOutcome:
     """The drafting answer format (DRAFT_FORMAT here, REWRITE_FORMAT in app/revise.py): one
     fenced block of LaTeX, optionally followed by a `Notes:` line. Exactly one block with no
-    heading, no `% @p` line and no document environment (and not empty unless `allow_empty`)
-    → done with a DraftAnswer; anything else → failed (the raw answer stays on the run).
-    `what` names the answer in errors ("draft"), `asked` says what was asked for."""
+    heading, no `% @p` line (unless `allow_markers`: the caller checks them) and no document
+    environment (and not empty unless `allow_empty`) → done with a DraftAnswer; anything
+    else → failed (the raw answer stays on the run). `what` names the answer in errors
+    ("draft"), `asked` says what was asked for."""
     text = result.text or ""
     blocks = _FENCE_RE.findall(text)  # an empty block (```latex\n```) matches too
     if not blocks:
@@ -148,12 +157,13 @@ def parse_fenced(result: RunResult, what: str, asked: str, *, allow_empty: bool)
     block = blocks[0].strip("\n")
     if not allow_empty and not block.strip():
         return RunOutcome(status="failed", error="the fenced block is empty")
-    if _FORBIDDEN_RE.search(block):
+    if (_FORBIDDEN_KEEP_MARKERS_RE if allow_markers else _FORBIDDEN_RE).search(block):
         return RunOutcome(
             status="failed",
             error=(
-                f"rejected: the {what} contains a heading, a `% @p` line or a document "
-                f"environment ({asked} was asked for)"
+                f"rejected: the {what} contains a heading"
+                + ("" if allow_markers else ", a `% @p` line")
+                + f" or a document environment ({asked} was asked for)"
             ),
         )
     tail = text[text.rfind("```") + 3 :]

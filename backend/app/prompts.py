@@ -30,7 +30,7 @@ import hashlib
 import logging
 import os
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -96,6 +96,9 @@ DRAFT_VARS = frozenset(
         "original",
         "span_kind",
         "paragraph_source",
+        # rewrite.md across paragraphs (2026-11-06)
+        "paragraphs",
+        "kept_markers",
     }
 )
 KIND_VARS: dict[str, frozenset[str]] = {
@@ -1421,27 +1424,69 @@ def assemble_rewrite_prompt(
     line: int,
     node_id: str | None,
     answer_format: str,
+    line_end: int | None = None,
+    kept_markers: Sequence[str] = (),
 ) -> AssembledPrompt:
     """The prompt for one rewrite (phase 8, Revise): the drafting system prompt (plus the
     writing style), then prompts/drafts/rewrite.md with the comment, the span as it reads
-    now, the paragraph and section around it, the paragraph's spec entry when `node_id`
-    names one, the labels and bib keys, and the answer format. Never cached."""
+    now, the paragraphs and section around it, each paragraph's spec entry, the labels and
+    bib keys, and the answer format. Never cached.
+
+    The span covers `line`-`line_end`; across paragraphs (2026-11-06) `paragraphs` lists each
+    one it touches and `kept_markers` the `% @p` lines inside it, which the answer must keep.
+    The first paragraph's entry is `node_id`'s when that names a paragraph (a finding's
+    `json_ref`), else its marker's. A paper's copy of the template from before that change
+    cannot ask to keep markers: a span across paragraphs is refused with it until the copy is
+    updated."""
     spec, spec_text = load_spec_for_prompt(repo)
     template = get_draft_template(repo, "rewrite")
+    if kept_markers and "kept_markers" not in template.variables:
+        raise PromptError(
+            f"{template.info.file} predates rewrites across paragraphs (it never mentions "
+            "`kept_markers`); merge the app's prompts/drafts/rewrite.md into it, or comment "
+            "within one paragraph"
+        )
     system_text = load_draft_system(repo)
     style = get_style(repo, repo.load_config().paper.style) if template.info.style else None
     section = style_section(style)
     if section:
         system_text = join_prompt([system_text, section]).rstrip("\n")
     scan = skeleton.scan_document(repo.root, repo.main)
+    touched = scan.paragraphs_in(file, line, line_end if line_end is not None else line)
+    lines = scan.lines.get(file, [])
+
+    def paragraph_node(node_ref: str | None) -> tuple[Node, Node] | None:
+        found = find_tree_node(spec, node_ref) if node_ref else None
+        return found if found is not None and found[0].level == "paragraph" else None
+
+    entries: list[dict[str, str]] = []
     node = parent = None
-    found = find_tree_node(spec, node_id) if node_id else None
-    if found is not None and found[0].level == "paragraph":
-        node, parent = found
-    paragraph = scan.paragraph_at(file, line)
-    if paragraph is not None:
-        lines = scan.lines.get(file, [])
-        paragraph_source = "\n".join(lines[paragraph.line_start - 1 : paragraph.line_end]).strip(
+    for i, para in enumerate(touched or [None]):
+        found = (paragraph_node(node_id) if i == 0 else None) or paragraph_node(
+            para.marker_id if para is not None else None
+        )
+        if found is not None and parent is None:
+            parent = found[1]
+        if i == 0 and found is not None:
+            node = found[0]
+        p_node = found[0] if found is not None else None
+        source = (
+            "\n".join(lines[para.line_start - 1 : para.line_end]).strip("\n")
+            if para is not None
+            else original
+        )
+        entries.append(
+            {
+                "id": p_node.id if p_node else "",
+                "says": p_node.says if p_node else "",
+                "function": p_node.fields.get("function", "") if p_node else "",
+                "claims_text": _claims_text(spec, p_node) if p_node else "",
+                "source": source,
+            }
+        )
+    if touched:
+        # The paragraphs as they read now, with whatever lies between them (their markers).
+        paragraph_source = "\n".join(lines[touched[0].line_start - 1 : touched[-1].line_end]).strip(
             "\n"
         )
     else:
@@ -1473,9 +1518,16 @@ def assemble_rewrite_prompt(
         "original": original,
         "span_kind": span_kind,
         "paragraph_source": paragraph_source,
+        "paragraphs": entries,
+        "kept_markers": list(kept_markers),
     }
     body = render_pass(template, variables)
-    scope = Scope(kind="selection", file=file, line_start=line, line_end=line)
+    scope = Scope(
+        kind="selection",
+        file=file,
+        line_start=line,
+        line_end=line_end if line_end is not None else line,
+    )
     resolved = ResolvedScope(
         scope=scope, name=f"rewrite in {file}:{line}", source=original, files={}
     )
